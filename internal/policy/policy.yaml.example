@@ -1,0 +1,63 @@
+# AgentGate policy — ordered, first-match-wins.
+#
+# Each rule has a `match` (action + target_glob) and a `decision`
+# (allow | deny | ask). The first rule whose match clause matches a gated
+# action wins. Anything no rule matches falls through to `default`.
+#
+# Glob notes:
+#   *   matches one path/host segment (filepath.Match semantics)
+#   **  matches across segments (e.g. "$PWD/**")
+#   a bare token (no wildcard) matches as a substring, so "registry.npmjs.org"
+#   matches the egress target "registry.npmjs.org:443".
+
+default: ask
+
+rules:
+  # --- exec: package installs and scripts the agent spawns ---------------
+  # Allow installs from the trusted public registries without prompting.
+  - match:
+      action: exec
+      target_glob: "*npm install*"
+    decision: ask          # surface every install so you see what is pulled
+
+  - match:
+      action: exec
+      target_glob: "*pip install*"
+    decision: ask
+
+  # Block obviously dangerous one-liners outright.
+  - match:
+      action: exec
+      target_glob: "*curl*|*sh*"
+    decision: deny
+
+  # --- fs_write: confine writes to the project directory ------------------
+  - match:
+      action: fs_write
+      target_glob: "$PWD/**"
+    decision: allow
+    scope: "$PWD"          # writes must stay under the project root
+
+  - match:
+      action: fs_write
+    decision: deny          # any write outside the project root is denied
+
+  # --- net_egress: allow registries, gate everything else -----------------
+  - match:
+      action: net_egress
+      target_glob: "registry.npmjs.org"
+    decision: allow
+
+  - match:
+      action: net_egress
+      target_glob: "pypi.org"
+    decision: allow
+
+  - match:
+      action: net_egress
+      target_glob: "github.com"
+    decision: allow
+
+  - match:
+      action: net_egress
+    decision: deny          # undeclared host -> blocked
