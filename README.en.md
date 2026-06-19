@@ -128,7 +128,27 @@ rules:
     decision: deny           # undeclared host -> blocked
 ```
 
-Glob semantics: `*` matches a single path/host segment (`filepath.Match` semantics), `**` matches across segments (e.g. `$PWD/**`), and a bare token with no wildcard matches as a substring (so `registry.npmjs.org` matches the egress target `registry.npmjs.org:443`). `agentgate init` drops a sensible built-in default policy you can edit.
+Glob semantics: `*` matches a single path/host segment (`filepath.Match` semantics), `**` matches across segments (e.g. `$PWD/**`). A bare host token with no wildcard matches on a **host boundary** — the whole target, or the host part of a `host:port` target (so `registry.npmjs.org` matches `registry.npmjs.org:443`), but it will **not** wave through look-alike hosts such as `github.com.evil.com` or `evilgithub.com`. A leading-dot token (e.g. `.github.com`) matches the whole subdomain tree (`api.github.com`) but not the bare apex `github.com` itself. `agentgate init` drops a sensible built-in default policy you can edit.
+
+### Dry-run first: `agentgate check`
+
+Wrote a policy and want to know how it resolves a given action *before* trusting an agent to it? `agentgate check` runs a hypothetical action against the policy and prints the decision (`allow` / `deny` / `ask`) plus why — **without running any subprocess, dialing any host, or writing to the audit log.**
+
+```bash
+agentgate check --action exec -- npm install left-pad
+# action  : exec
+# target  : npm install left-pad
+# intent  : agent wants to install npm package: left-pad
+# decision: ask (matched a rule)
+
+agentgate check --action net_egress github.com.evil.com:443
+# decision: deny (no rule matched, fell through to default)
+
+agentgate check --action fs_write /etc/passwd
+# decision: deny (matched an allow rule but the path escapes its scope)
+```
+
+`--action` takes `exec` (default) / `fs_write` / `net_egress`; `--policy` selects the file to check.
 
 ## Configuration
 
@@ -159,6 +179,7 @@ An honest read — containers are far more mature at isolation; AgentGate solves
 - [x] **m1 — wrap & gate exec**: wrap an agent, intercept each subprocess it spawns, prompt allow/deny with the captured intent.
 - [x] **m2 — scope fs & net**: a `policy.yaml` confines filesystem writes to declared paths and gates egress per host, with a JSONL audit log.
 - [x] **m3 — DSL & demo**: the `allow`/`deny`/`ask` DSL + `--always` persistence, an `agentgate init` default policy, a 60s asciinema demo, and the bilingual README.
+- [x] **m4 — author & audit a policy**: `agentgate check` dry-runs any action against the policy, host-boundary egress matching closes the look-alike-host bypass, and `.host` tokens scope rules to a subdomain tree.
 - [ ] Drop-in adapters and README safety-section integration for more harnesses (ECC / openfang).
 - [ ] A policy cookbook: ready-to-use policies that catch real supply-chain behavior.
 - [ ] Team-shared policies / audit dashboard (a v2+ exploration, not the current thesis).

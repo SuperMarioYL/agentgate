@@ -128,7 +128,27 @@ rules:
     decision: deny           # 未声明的主机 -> 拦截
 ```
 
-Glob 语义：`*` 匹配单个路径 / 主机段（`filepath.Match` 语义），`**` 跨段匹配（如 `$PWD/**`），不带通配的裸 token 按子串匹配（如 `registry.npmjs.org` 命中 egress 目标 `registry.npmjs.org:443`）。`agentgate init` 会落一份内置的合理默认策略，可直接编辑。
+Glob 语义：`*` 匹配单个路径 / 主机段（`filepath.Match` 语义），`**` 跨段匹配（如 `$PWD/**`）。不带通配的裸 host token 按**主机边界**匹配——命中整个 target，或 `host:port` 的 host 部分（如 `registry.npmjs.org` 命中 `registry.npmjs.org:443`），但**不会**误放 `github.com.evil.com` 或 `evilgithub.com` 这类伪造主机。以点开头的 token（如 `.github.com`）匹配整棵子域树（`api.github.com`），但不含裸顶级域 `github.com` 本身。`agentgate init` 会落一份内置的合理默认策略，可直接编辑。
+
+### 先 dry-run 一下：`agentgate check`
+
+写完策略，想知道「Agent 真要做某个动作时会怎样」？`agentgate check` 把一个假想动作丢给策略，打印决策（`allow` / `deny` / `ask`）与命中原因——**不跑任何子进程、不发起任何 egress、不写审计日志**。
+
+```bash
+agentgate check --action exec -- npm install left-pad
+# action  : exec
+# target  : npm install left-pad
+# intent  : agent wants to install npm package: left-pad
+# decision: ask (matched a rule)
+
+agentgate check --action net_egress github.com.evil.com:443
+# decision: deny (no rule matched, fell through to default)
+
+agentgate check --action fs_write /etc/passwd
+# decision: deny (matched an allow rule but the path escapes its scope)
+```
+
+`--action` 取 `exec`（默认）/ `fs_write` / `net_egress`，`--policy` 指定要检查的策略文件。
 
 ## 配置项
 
@@ -159,6 +179,7 @@ Glob 语义：`*` 匹配单个路径 / 主机段（`filepath.Match` 语义），
 - [x] **m1 —— wrap & gate exec**：包裹 Agent，拦截它拉起的每个子进程，带意图提示 allow/deny。
 - [x] **m2 —— scope fs & net**：`policy.yaml` 把文件写入限制在声明路径内，按主机门控 egress，并写入 JSONL 审计。
 - [x] **m3 —— DSL & 演示**：`allow`/`deny`/`ask` DSL + `--always` 持久化、`agentgate init` 默认策略、60 秒 asciinema 演示、双语 README。
+- [x] **m4 —— 写策略 & 审策略**：`agentgate check` 对任意动作做 dry-run；egress 按主机边界匹配，堵住伪造主机绕过；`.host` token 把规则限定在子域树内。
 - [ ] 更多 harness 的开箱适配与 README 安全章节集成（ECC / openfang）。
 - [ ] 策略 cookbook：针对真实供应链行为的若干即用策略。
 - [ ] 团队共享策略 / 审计仪表盘（v2+ 探索，非当前论点）。
