@@ -143,7 +143,13 @@ func globMatch(pattern, target string) bool {
 		if !strings.HasPrefix(target, prefix) {
 			return false
 		}
-		return suffix == "" || strings.HasSuffix(target, suffix) || strings.Contains(target, suffix)
+		// A non-empty suffix must anchor to the END of the target, not appear
+		// anywhere inside it. A bare Contains here over-matches path globs: a
+		// scope like `/proj/**.env` would otherwise match
+		// `/proj/.env.backup/passwd`, widening allow/scope rules past intent —
+		// the same over-match class the host-token boundary fix closed for net
+		// egress, here for path/`**` globs.
+		return suffix == "" || strings.HasSuffix(target, suffix)
 	}
 	if ok, _ := filepath.Match(pattern, target); ok {
 		return true
@@ -229,21 +235,13 @@ func Append(path string, rule Rule) error {
 
 // WithinScope reports whether path is confined to the rule's Scope prefix.
 // A rule with no Scope imposes no confinement (returns true).
+//
+// Confinement is checked on the symlink-resolved paths (see confinedToScope),
+// so a symlink that lives inside the scope but points outside it cannot smuggle
+// a write past the sandbox.
 func (r *Rule) WithinScope(path string) bool {
 	if r == nil || r.Scope == "" {
 		return true
 	}
-	abs, err := filepath.Abs(path)
-	if err != nil {
-		abs = path
-	}
-	scope, err := filepath.Abs(os.ExpandEnv(r.Scope))
-	if err != nil {
-		scope = r.Scope
-	}
-	rel, err := filepath.Rel(scope, abs)
-	if err != nil {
-		return false
-	}
-	return rel == "." || !strings.HasPrefix(rel, "..")
+	return confinedToScope(r.Scope, path)
 }

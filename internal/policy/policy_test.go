@@ -138,6 +138,84 @@ rules:
 	}
 }
 
+// Reproduction for the v0.3.0 fix: a `**` glob suffix must anchor to the END of
+// the target, never match as a mid-string substring. Before the fix
+// `/proj/**.env` over-matched `/proj/.env.backup/passwd`, silently widening
+// allow/scope rules — the same over-match class the v0.2.0 net host-token fix
+// closed, here for path/`**` globs.
+func TestDoubleStarSuffixDoesNotOvermatchSubstring(t *testing.T) {
+	if !globMatch("/proj/**.env", "/proj/config/app.env") {
+		t.Fatal("`**.env` should match a path that genuinely ends in .env")
+	}
+	if globMatch("/proj/**.env", "/proj/.env.backup/passwd") {
+		t.Fatal("`**.env` must NOT match a path where .env is only a mid-string substring (scope over-match)")
+	}
+	if globMatch("/proj/**.env", "/proj/secret.env.bak") {
+		t.Fatal("`**.env` must NOT match when .env is not the actual suffix")
+	}
+	// The prefix is still required.
+	if globMatch("/proj/**.env", "/other/app.env") {
+		t.Fatal("`**.env` must still respect its prefix")
+	}
+}
+
+// Reproduction for the v0.3.0 high-severity fix: a symlink that lives inside the
+// declared scope but points outside it must NOT let a write escape confinement.
+// The lexical-only check accepted the in-scope path; WithinScope now resolves
+// symlinks first.
+func TestWithinScopeRejectsSymlinkEscape(t *testing.T) {
+	root := t.TempDir()
+	scope := filepath.Join(root, "scope")
+	outside := filepath.Join(root, "outside")
+	if err := os.MkdirAll(scope, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(outside, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// A symlink INSIDE scope pointing OUTSIDE it.
+	link := filepath.Join(scope, "escape")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+
+	r := &Rule{Scope: scope}
+
+	// A real file directly inside scope is still fine.
+	if !r.WithinScope(filepath.Join(scope, "ok.txt")) {
+		t.Fatal("a path genuinely inside scope must be within")
+	}
+	// Writing THROUGH the symlink lands outside scope and must be rejected,
+	// even though the lexical path scope/escape/secret is "inside" scope.
+	if r.WithinScope(filepath.Join(link, "secret")) {
+		t.Fatal("a write through an in-scope symlink that escapes scope must be rejected (sandbox bypass)")
+	}
+}
+
+// A symlinked scope root itself must still confine writes correctly: resolving
+// both sides means a legitimately in-scope write is not falsely rejected.
+func TestWithinScopeResolvesScopeRootSymlink(t *testing.T) {
+	root := t.TempDir()
+	real := filepath.Join(root, "real")
+	if err := os.MkdirAll(real, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	linkedScope := filepath.Join(root, "linked")
+	if err := os.Symlink(real, linkedScope); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+	r := &Rule{Scope: linkedScope}
+	if !r.WithinScope(filepath.Join(linkedScope, "a.go")) {
+		t.Fatal("a write inside a symlinked scope root must be within scope")
+	}
+	if !r.WithinScope(filepath.Join(real, "a.go")) {
+		t.Fatal("a write to the resolved scope path must be within scope")
+	}
+	if r.WithinScope(filepath.Join(root, "elsewhere", "x")) {
+		t.Fatal("a write outside the resolved scope must be rejected")
+	}
+}
+
 func TestInvalidDecisionRejected(t *testing.T) {
 	if _, err := Parse([]byte("rules:\n  - match: {}\n    decision: maybe\n")); err == nil {
 		t.Fatal("expected invalid decision to error")

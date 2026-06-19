@@ -114,6 +114,61 @@ func TestAskOperatorDeny(t *testing.T) {
 	}
 }
 
+// v0.3.0 m4: headless enforce mode. An engine built with a nil prompter (what
+// `agentgate run --enforce` constructs) must resolve every "ask" to deny without
+// blocking on a TTY — the deny-by-default posture CI relies on.
+func TestHeadlessEnforceFailsClosed(t *testing.T) {
+	pol, err := policy.Parse([]byte("default: ask\nrules: []\n"))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	var log bytes.Buffer
+	eng := NewEngine(pol, nil, audit.NewWriter(&log)) // nil prompter == headless
+	fs := NewFSGate(eng)
+
+	ok, err := fs.CheckWrite("/tmp/whatever", "do a thing", "ci-agent")
+	if err != nil {
+		t.Fatalf("headless decide errored: %v", err)
+	}
+	if ok {
+		t.Fatal("headless enforce must deny an `ask` (deny-by-default), not allow")
+	}
+	if !strings.Contains(log.String(), `"decision":"deny"`) {
+		t.Fatalf("headless deny not recorded in audit trail:\n%s", log.String())
+	}
+}
+
+// v0.3.0 fix: a write routed through a symlink that escapes the declared scope
+// must be denied by the fs gate, end to end.
+func TestFSGateRejectsSymlinkScopeEscape(t *testing.T) {
+	root := t.TempDir()
+	scope := filepath.Join(root, "scope")
+	outside := filepath.Join(root, "outside")
+	if err := os.MkdirAll(scope, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(outside, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(scope, "escape")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+	src := "default: deny\nrules:\n" +
+		"  - match: {action: fs_write, target_glob: \"" + scope + "/**\"}\n" +
+		"    decision: allow\n" +
+		"    scope: \"" + scope + "\"\n"
+	eng, _ := newEngine(t, src, "")
+	fs := NewFSGate(eng)
+
+	if ok, _ := fs.CheckWrite(filepath.Join(scope, "ok.txt"), "legit", "claude-code"); !ok {
+		t.Fatal("a genuine in-scope write must still be allowed")
+	}
+	if ok, _ := fs.CheckWrite(filepath.Join(link, "secret"), "exfiltrate", "claude-code"); ok {
+		t.Fatal("a write through an in-scope symlink that escapes scope must be denied")
+	}
+}
+
 // m3: an "ask" routed to [A]lways allows and persists a rule.
 func TestAlwaysPersists(t *testing.T) {
 	dir := t.TempDir()
