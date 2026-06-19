@@ -7,6 +7,7 @@ package policy
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -147,10 +148,14 @@ func globMatch(pattern, target string) bool {
 	if ok, _ := filepath.Match(pattern, target); ok {
 		return true
 	}
-	// A bare substring (e.g. a host name) also matches anywhere in the target,
-	// so `registry.npmjs.org` matches `registry.npmjs.org:443`.
+	// A bare token (e.g. a host name) matches the whole target or the host part
+	// of a `host:port` target, so `registry.npmjs.org` matches
+	// `registry.npmjs.org:443`. It must NOT match on a bare substring: a rule for
+	// `github.com` must not allow egress to `github.com.evil.com` (suffix attack),
+	// `notgithub.com` (prefix attack), or `evilgithub.com` — that would defeat the
+	// egress allowlist entirely.
 	if !strings.ContainsAny(pattern, "*?[") {
-		return strings.Contains(target, pattern)
+		return hostTokenMatch(pattern, target)
 	}
 	// For command lines (which contain '/' that filepath.Match treats as a hard
 	// segment boundary) fall back to a wildcard matcher where '*' spans any
@@ -159,6 +164,22 @@ func globMatch(pattern, target string) bool {
 		return starMatch(pattern, target)
 	}
 	return false
+}
+
+// hostTokenMatch matches a bare (wildcard-free) token against a target on a
+// host boundary. It accepts an exact match, a `token:port` target (the common
+// egress case), and `*.`-rooted subdomain matching when the token begins with a
+// leading dot (".github.com" matches "api.github.com:443" but not "github.com").
+// Everything else — substrings, prefix/suffix splices — is rejected.
+func hostTokenMatch(token, target string) bool {
+	host := target
+	if h, _, err := net.SplitHostPort(target); err == nil {
+		host = h
+	}
+	if strings.HasPrefix(token, ".") {
+		return strings.HasSuffix(host, token)
+	}
+	return host == token
 }
 
 // starMatch matches a pattern containing '*' wildcards against target, treating

@@ -95,6 +95,49 @@ func TestStarMatchSpansCommandLine(t *testing.T) {
 	}
 }
 
+// A bare host token must match on a host boundary, never a bare substring:
+// an allow rule for `github.com` must not leak egress to look-alike hosts.
+func TestHostTokenBoundary(t *testing.T) {
+	p := mustParse(t, `
+default: deny
+rules:
+  - match: {action: net_egress, target_glob: "github.com"}
+    decision: allow
+`)
+	allow := []string{"github.com", "github.com:443"}
+	for _, tgt := range allow {
+		if got := p.Resolve(agentctx.GateRequest{Action: agentctx.ActionNetEgress, Target: tgt}).Decision; got != Allow {
+			t.Errorf("declared host %q should be allowed, got %s", tgt, got)
+		}
+	}
+	deny := []string{"github.com.evil.com:443", "notgithub.com:443", "evilgithub.com:443", "github.com.attacker:80"}
+	for _, tgt := range deny {
+		if got := p.Resolve(agentctx.GateRequest{Action: agentctx.ActionNetEgress, Target: tgt}).Decision; got == Allow {
+			t.Errorf("look-alike host %q must NOT be allowed (egress allowlist bypass)", tgt)
+		}
+	}
+}
+
+// A leading-dot token scopes a rule to a subdomain tree without matching the
+// apex, so `.github.com` covers `api.github.com` but not `github.com` itself.
+func TestHostTokenSubdomain(t *testing.T) {
+	p := mustParse(t, `
+default: deny
+rules:
+  - match: {action: net_egress, target_glob: ".github.com"}
+    decision: allow
+`)
+	if p.Resolve(agentctx.GateRequest{Action: agentctx.ActionNetEgress, Target: "api.github.com:443"}).Decision != Allow {
+		t.Fatal("subdomain api.github.com should match .github.com")
+	}
+	if p.Resolve(agentctx.GateRequest{Action: agentctx.ActionNetEgress, Target: "github.com:443"}).Decision == Allow {
+		t.Fatal(".github.com must not match the bare apex github.com")
+	}
+	if p.Resolve(agentctx.GateRequest{Action: agentctx.ActionNetEgress, Target: "evilgithub.com:443"}).Decision == Allow {
+		t.Fatal(".github.com must not splice onto evilgithub.com")
+	}
+}
+
 func TestInvalidDecisionRejected(t *testing.T) {
 	if _, err := Parse([]byte("rules:\n  - match: {}\n    decision: maybe\n")); err == nil {
 		t.Fatal("expected invalid decision to error")
