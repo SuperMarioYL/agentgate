@@ -1,0 +1,81 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 372" width="880" height="372"
+     font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'PingFang SC', 'Microsoft YaHei', sans-serif"
+     role="img" aria-label="AgentGate architecture: a coding agent's subprocesses and network egress are intercepted by a PATH shim and an HTTP(S) proxy, forwarded to a unix-socket broker and gate engine that resolves each action against policy.yaml, prompts allow/deny/always, and records the verdict to a JSONL audit log; allowed actions run, denied ones are blocked">
+  <defs>
+    <marker id="ah-d" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#5A5A66"/></marker>
+    <marker id="ah-allow-d" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#2DC79A"/></marker>
+    <marker id="ah-deny-d" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#FF5C72"/></marker>
+  </defs>
+  <rect x="0" y="0" width="880" height="372" fill="#1D1D1F"/>
+
+  <!-- host boundary frame -->
+  <rect x="278" y="24" width="578" height="324" rx="18" fill="none" stroke="#FF5C72" stroke-opacity="0.45" stroke-width="1.5" stroke-dasharray="6 5"/>
+  <text x="298" y="46" font-size="12.5" font-weight="600" fill="#FF8B9B">your host — every crossing is gated per action</text>
+
+  <!-- connectors -->
+  <g stroke="#3A3A44" stroke-width="1.6" fill="none">
+    <line x1="212" y1="138" x2="296" y2="120" marker-end="url(#ah-d)"/>
+    <line x1="212" y1="206" x2="296" y2="224" marker-end="url(#ah-d)"/>
+    <line x1="468" y1="120" x2="540" y2="156" marker-end="url(#ah-d)"/>
+    <line x1="468" y1="224" x2="540" y2="190" marker-end="url(#ah-d)"/>
+    <line x1="690" y1="124" x2="690" y2="92" marker-end="url(#ah-d)"/>
+    <line x1="690" y1="248" x2="690" y2="288" marker-end="url(#ah-d)"/>
+  </g>
+  <!-- verdict edges -->
+  <g stroke-width="1.8" fill="none">
+    <path d="M615 156 C 540 96, 360 96, 296 110" stroke="#2DC79A" stroke-opacity="0.75" marker-end="url(#ah-allow-d)"/>
+    <path d="M615 190 C 540 250, 360 250, 296 234" stroke="#FF5C72" stroke-opacity="0.75" marker-end="url(#ah-deny-d)"/>
+  </g>
+
+  <!-- Coding Agent -->
+  <g>
+    <rect x="36" y="120" width="176" height="104" rx="15" fill="#94A3B8" fill-opacity="0.12" stroke="#94A3B8" stroke-width="1.5"/>
+    <text x="124" y="150" text-anchor="middle" font-size="15" font-weight="600" fill="#CBD5E1">Coding Agent</text>
+    <text x="124" y="172" text-anchor="middle" font-size="11.5" fill="#94A3B8">autonomous mode</text>
+    <text x="124" y="192" text-anchor="middle" font-size="11" fill="#8A95A5">spawns installs · scripts</text>
+    <text x="124" y="208" text-anchor="middle" font-size="11" fill="#8A95A5">opens network egress</text>
+  </g>
+
+  <!-- PATH shim -->
+  <g>
+    <rect x="296" y="86" width="172" height="68" rx="14" fill="#4DA3FF" fill-opacity="0.16" stroke="#4DA3FF" stroke-width="1.5"/>
+    <text x="382" y="114" text-anchor="middle" font-size="14" font-weight="600" fill="#8EC4FF">PATH shim</text>
+    <text x="382" y="134" text-anchor="middle" font-size="10.5" fill="#7AB6FF">npm · pip · go · node · curl…</text>
+  </g>
+
+  <!-- HTTP(S) proxy -->
+  <g>
+    <rect x="296" y="190" width="172" height="68" rx="14" fill="#4DA3FF" fill-opacity="0.16" stroke="#4DA3FF" stroke-width="1.5"/>
+    <text x="382" y="218" text-anchor="middle" font-size="14" font-weight="600" fill="#8EC4FF">HTTP(S) proxy</text>
+    <text x="382" y="238" text-anchor="middle" font-size="10.5" fill="#7AB6FF">localhost egress redirect</text>
+  </g>
+
+  <!-- Broker + Gate Engine -->
+  <g>
+    <rect x="540" y="124" width="300" height="124" rx="15" fill="#8985FF" fill-opacity="0.16" stroke="#8985FF" stroke-width="1.6"/>
+    <text x="690" y="150" text-anchor="middle" font-size="15" font-weight="700" fill="#ADA9FF">unix-socket broker · Gate Engine</text>
+    <g font-size="11.5">
+      <rect x="558" y="162" width="264" height="30" rx="8" fill="#000000" fill-opacity="0.28" stroke="#8985FF" stroke-width="1.1"/>
+      <text x="572" y="181" fill="#E7E3F7"><tspan font-weight="700" fill="#ADA9FF">1</tspan>  resolve action vs policy (first-match)</text>
+      <rect x="558" y="198" width="264" height="30" rx="8" fill="#000000" fill-opacity="0.28" stroke="#8985FF" stroke-width="1.1"/>
+      <text x="572" y="217" fill="#E7E3F7"><tspan font-weight="700" fill="#ADA9FF">2</tspan>  prompt [a]llow / [d]eny / [A]lways</text>
+    </g>
+  </g>
+
+  <!-- policy.yaml -->
+  <g>
+    <rect x="596" y="56" width="188" height="36" rx="11" fill="#2DC79A" fill-opacity="0.12" stroke="#2DC79A" stroke-width="1.4"/>
+    <text x="690" y="79" text-anchor="middle" font-size="12.5" font-weight="600" fill="#5BE0BC">policy.yaml — allow / deny / ask</text>
+  </g>
+
+  <!-- audit log -->
+  <g>
+    <rect x="596" y="288" width="188" height="44" rx="11" fill="#2DC79A" fill-opacity="0.12" stroke="#2DC79A" stroke-width="1.4"/>
+    <text x="690" y="310" text-anchor="middle" font-size="12.5" font-weight="600" fill="#5BE0BC">JSONL audit log</text>
+    <text x="690" y="326" text-anchor="middle" font-size="10.5" fill="#2DC79A">agentgate audit</text>
+  </g>
+
+  <!-- verdict labels -->
+  <text x="356" y="80" font-size="11" font-weight="600" fill="#5BE0BC">allow → real binary runs</text>
+  <text x="356" y="268" font-size="11" font-weight="600" fill="#FF8B9B">deny → blocked, never runs</text>
+</svg>

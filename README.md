@@ -42,6 +42,18 @@
 
 > 这正是 [@simonw](https://twitter.com/simonw) 反复讨论的「Agent 跑 shell 命令时信任与控制的取舍」，也是那些把自主性拉满、却不带任何主机护栏的编码 Agent harness（如 [affaan-m/ECC](https://github.com/affaan-m/ECC)）缺的那一块——AgentGate 跟它们互补，而非竞争。
 
+## <img src="https://api.iconify.design/tabler:topology-star-3.svg?color=%232563eb&width=24" height="22" align="absmiddle" alt=""> 架构
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="./assets/atlas-dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset="./assets/atlas-light.svg">
+    <img src="./assets/atlas-light.svg" width="880" alt="架构：编码 Agent 拉起的子进程与网络 egress 被 PATH shim 和 HTTP(S) 代理拦下，转发给 unix-socket broker / Gate Engine，按 policy.yaml 逐个动作裁决并提示 allow/deny/always，结果写入 JSONL 审计日志——放行的动作才真正执行，拒绝的从不落地">
+  </picture>
+</p>
+
+编码 Agent 跑在护栏后面：它拉起的每个子进程被 **PATH shim** 截获，每个网络请求被注入的 **HTTP(S) 代理**重定向到本地。两条路径都汇到一个 **unix-socket broker / Gate Engine**，由它按 `policy.yaml` 做首条匹配即生效的裁决——必要时弹出 `[a]llow / [d]eny / [A]lways` 提示。放行的动作才 `exec` 真实二进制并继续，拒绝的从不落地；每一笔裁决都追加进 **JSONL 审计日志**，事后用 `agentgate audit` 回看。
+
 ## 快速开始
 
 需要 Go 1.24+（Linux 或 macOS）。从冷启动到第一个授权提示，三条命令：
@@ -74,13 +86,13 @@ agentgate audit
 
 > 拦截方式可移植、无需 ptrace / libpcap：通过 PATH shim 把每个被拦的命令转发给一个 unix-socket broker，由它持有门控决策；网络 egress 则通过注入 `HTTP(S)_PROXY` 的本地重定向代理逐个主机门控。完整走查见 [`examples/claude-code-session.md`](./examples/claude-code-session.md)。
 
-## 演示
+## <img src="https://api.iconify.design/tabler:photo.svg?color=%232563eb&width=24" height="22" align="absmiddle" alt=""> 演示
 
-60 秒：Agent 的 `npm install` 被暂停等待批准，安装后脚本对未声明主机的 egress 被红字拦下，最后 `agentgate audit` 打出完整轨迹。
+Agent 的 `npm install` 被暂停等待批准，安装后脚本对未声明主机的 egress 被红字拦下，最后 `agentgate audit` 打出完整轨迹：
 
-[![asciicast](https://asciinema.org/a/PLACEHOLDER.svg)](https://asciinema.org/a/PLACEHOLDER)
+![demo](assets/demo.gif)
 
-> 📼 本仓库已附带录制好的 [`docs/demo.cast`](./docs/demo.cast)，可本地用 `asciinema play docs/demo.cast` 回放。上面的链接是占位符——发布后将 cast 上传到 asciinema.org 即可替换 `PLACEHOLDER` 为真实 ID。
+> 该 GIF 由 [`docs/demo.tape`](./docs/demo.tape) 经 [vhs](https://github.com/charmbracelet/vhs) 在 CI 中渲染（见 [`.github/workflows/demo.yml`](./.github/workflows/demo.yml)）。仓库另附录制好的 [`docs/demo.cast`](./docs/demo.cast)，可本地用 `asciinema play docs/demo.cast` 回放。
 
 ## policy.yaml 策略 DSL
 

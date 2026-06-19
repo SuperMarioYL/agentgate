@@ -1,0 +1,18 @@
+# Demo policy used by docs/demo.tape so the recording is deterministic and
+# non-interactive: the install is auto-allowed, an undeclared fetch is blocked,
+# and every decision lands in the audit log. Your real `agentgate init` policy
+# uses `ask` on installs so you stay in the loop — see the README for the DSL.
+default: deny
+
+rules:
+  # Auto-allow dependency installs for the recording (real default: ask).
+  - match:
+      action: exec
+      target_glob: "*install*"
+    decision: allow
+
+  # Block any direct fetch the agent tries to make to an undeclared host.
+  - match:
+      action: exec
+      target_glob: "*curl*"
+    decision: deny

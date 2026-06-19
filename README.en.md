@@ -42,6 +42,18 @@ This is **not** a static dependency scanner. Supply-chain worms like Miasma targ
 
 > This is the trust-vs-control gap [@simonw](https://twitter.com/simonw) keeps flagging when agents run shell commands, and the missing piece for the autonomy-maximizing coding-agent harnesses (e.g. [affaan-m/ECC](https://github.com/affaan-m/ECC)) that ship no host gate at all — AgentGate is complementary to them, not a competitor.
 
+## <img src="https://api.iconify.design/tabler:topology-star-3.svg?color=%232563eb&width=24" height="22" align="absmiddle" alt=""> Architecture
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="./assets/atlas-dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset="./assets/atlas-light.svg">
+    <img src="./assets/atlas-light.svg" width="880" alt="Architecture: a coding agent's spawned subprocesses and network egress are intercepted by a PATH shim and an injected HTTP(S) proxy, forwarded to a unix-socket broker / Gate Engine that resolves each action against policy.yaml and prompts allow/deny/always; the verdict is recorded to a JSONL audit log — allowed actions run, denied ones never land">
+  </picture>
+</p>
+
+The coding agent runs behind the gate: every subprocess it spawns is caught by a **PATH shim**, and every network call is redirected through an injected **HTTP(S) proxy**. Both paths converge on a single **unix-socket broker / Gate Engine** that resolves each action against `policy.yaml` first-match-wins — prompting `[a]llow / [d]eny / [A]lways` when needed. An allowed action `exec`s the real binary and proceeds; a denied one never lands. Every verdict is appended to a **JSONL audit log** you can replay with `agentgate audit`.
+
 ## Quickstart
 
 Requires Go 1.24+ (Linux or macOS). Three commands from a cold start to your first prompt:
@@ -74,13 +86,13 @@ agentgate audit
 
 > Interception is portable and ptrace/libpcap-free: a PATH shim forwards each intercepted command to a unix-socket broker that owns the gate decision, and network egress is gated per host through a localhost redirect proxy wired in via `HTTP(S)_PROXY`. See [`examples/claude-code-session.md`](./examples/claude-code-session.md) for the full walkthrough.
 
-## Demo
+## <img src="https://api.iconify.design/tabler:photo.svg?color=%232563eb&width=24" height="22" align="absmiddle" alt=""> Demo
 
-60 seconds: an agent's `npm install` is paused for approval, a post-install egress to an undeclared host is blocked in red, and `agentgate audit` prints the full trail.
+An agent's `npm install` is paused for approval, a post-install egress to an undeclared host is blocked in red, and `agentgate audit` prints the full trail:
 
-[![asciicast](https://asciinema.org/a/PLACEHOLDER.svg)](https://asciinema.org/a/PLACEHOLDER)
+![demo](assets/demo.gif)
 
-> 📼 A recorded [`docs/demo.cast`](./docs/demo.cast) ships in this repo — replay it locally with `asciinema play docs/demo.cast`. The link above is a placeholder; after publishing, upload the cast to asciinema.org and swap `PLACEHOLDER` for the real id.
+> The GIF is rendered in CI from [`docs/demo.tape`](./docs/demo.tape) via [vhs](https://github.com/charmbracelet/vhs) (see [`.github/workflows/demo.yml`](./.github/workflows/demo.yml)). A recorded [`docs/demo.cast`](./docs/demo.cast) also ships in this repo — replay it locally with `asciinema play docs/demo.cast`.
 
 ## The policy.yaml DSL
 
