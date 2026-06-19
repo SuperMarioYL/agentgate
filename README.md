@@ -8,7 +8,7 @@
 
 <p align="center">
   <a href="./LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT" /></a>
-  <a href="https://github.com/SuperMarioYL/agentgate/releases"><img src="https://img.shields.io/badge/release-v0.1.0-2563eb.svg" alt="Release" /></a>
+  <a href="https://github.com/SuperMarioYL/agentgate/releases"><img src="https://img.shields.io/badge/release-v0.3.0-2563eb.svg" alt="Release" /></a>
   <a href="https://github.com/SuperMarioYL/agentgate/actions"><img src="https://img.shields.io/github/actions/workflow/status/SuperMarioYL/agentgate/ci.yml?branch=main&label=CI" alt="CI" /></a>
   <a href="https://go.dev/"><img src="https://img.shields.io/badge/Go-1.24%2B-00ADD8.svg?logo=go&logoColor=white" alt="Go" /></a>
   <img src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS-334155.svg" alt="Platform" />
@@ -82,7 +82,14 @@ agentgate run -- claude --autonomous "加个图表库并接好"   # 3. 把你的
 agentgate audit
 # ✓  13:20:26  exec        allow    npm install chalk
 # ✗  13:20:26  net_egress  deny     telemetry.unknown-host.example
+
+# 只看「被拦下了什么」——按决策 / 动作 / 时间过滤（v0.3.0）
+agentgate audit --decision deny
+agentgate audit --action net_egress --since 2h
+agentgate audit --decision deny --json   # 原始 JSONL，便于管道处理
 ```
+
+> `--since` 接受 RFC3339 时间戳、日期（`2026-06-19`）或「多久之前」的时长（`2h`、`30m`）。
 
 > 拦截方式可移植、无需 ptrace / libpcap：通过 PATH shim 把每个被拦的命令转发给一个 unix-socket broker，由它持有门控决策；网络 egress 则通过注入 `HTTP(S)_PROXY` 的本地重定向代理逐个主机门控。完整走查见 [`examples/claude-code-session.md`](./examples/claude-code-session.md)。
 
@@ -128,7 +135,7 @@ rules:
     decision: deny           # 未声明的主机 -> 拦截
 ```
 
-Glob 语义：`*` 匹配单个路径 / 主机段（`filepath.Match` 语义），`**` 跨段匹配（如 `$PWD/**`）。不带通配的裸 host token 按**主机边界**匹配——命中整个 target，或 `host:port` 的 host 部分（如 `registry.npmjs.org` 命中 `registry.npmjs.org:443`），但**不会**误放 `github.com.evil.com` 或 `evilgithub.com` 这类伪造主机。以点开头的 token（如 `.github.com`）匹配整棵子域树（`api.github.com`），但不含裸顶级域 `github.com` 本身。`agentgate init` 会落一份内置的合理默认策略，可直接编辑。
+Glob 语义：`*` 匹配单个路径 / 主机段（`filepath.Match` 语义），`**` 跨段匹配（如 `$PWD/**`）；带后缀的 `**` 模式（如 `/proj/**.env`）要求 target 以该后缀**结尾**，不会把后缀当作中间子串去命中（即 `/proj/.env.backup/passwd` 不会被 `/proj/**.env` 误放）。不带通配的裸 host token 按**主机边界**匹配——命中整个 target，或 `host:port` 的 host 部分（如 `registry.npmjs.org` 命中 `registry.npmjs.org:443`），但**不会**误放 `github.com.evil.com` 或 `evilgithub.com` 这类伪造主机。以点开头的 token（如 `.github.com`）匹配整棵子域树（`api.github.com`），但不含裸顶级域 `github.com` 本身。`agentgate init` 会落一份内置的合理默认策略，可直接编辑。
 
 ### 先 dry-run 一下：`agentgate check`
 
@@ -161,6 +168,18 @@ agentgate check --action fs_write /etc/passwd
 | `--agent` | string | `claude-code` | 被包裹 Agent 的标识，会带进提示与审计 |
 | `--no-net` | bool | `false` | 关闭网络 egress 门控（仅门控 exec / fs） |
 | `--always` | bool | `true` | 把 `[A]lways` 选择持久化写回策略文件 |
+| `--enforce` | bool | `false` | 无人值守模式：不弹任何提示，每个 `ask` 直接 `deny`（默认拒绝），适配 CI |
+
+### 在 CI 里跑：`--enforce`
+
+CI 流水线里没有操作员可以回答提示。`agentgate run --enforce` 用空 prompter 启动引擎——每个 `ask` 直接落到 `deny`（默认拒绝），整个运行**永不等待 TTY**：
+
+```bash
+agentgate run --enforce -- npm ci
+# agentgate: --enforce (headless): no prompts, ask resolves to deny (deny-by-default)
+```
+
+只有被策略**显式 `allow`** 的动作才放行；其余一律拦下并落审计。该模式下 `--always` 持久化自动关闭（没有操作员可以选 `[A]lways`）。
 
 ## 对比 vs 容器 / 静态扫描器
 
@@ -180,6 +199,7 @@ agentgate check --action fs_write /etc/passwd
 - [x] **m2 —— scope fs & net**：`policy.yaml` 把文件写入限制在声明路径内，按主机门控 egress，并写入 JSONL 审计。
 - [x] **m3 —— DSL & 演示**：`allow`/`deny`/`ask` DSL + `--always` 持久化、`agentgate init` 默认策略、60 秒 asciinema 演示、双语 README。
 - [x] **m4 —— 写策略 & 审策略**：`agentgate check` 对任意动作做 dry-run；egress 按主机边界匹配，堵住伪造主机绕过；`.host` token 把规则限定在子域树内。
+- [x] **m5 —— CI 与排障**：`agentgate run --enforce` 无人值守默认拒绝模式（CI 不再卡在 TTY 提示）；`agentgate audit` 支持按 `--decision` / `--action` / `--since` 过滤与 `--json` 输出；修复符号链接越界写入与 `**` 路径 glob 子串过宽匹配两处沙箱缺陷。
 - [ ] 更多 harness 的开箱适配与 README 安全章节集成（ECC / openfang）。
 - [ ] 策略 cookbook：针对真实供应链行为的若干即用策略。
 - [ ] 团队共享策略 / 审计仪表盘（v2+ 探索，非当前论点）。

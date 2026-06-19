@@ -4,6 +4,41 @@ All notable changes to AgentGate are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-06-19
+
+Hardens the filesystem sandbox, tightens path-glob matching, and makes AgentGate
+usable in CI.
+
+### Added
+
+- **`agentgate run --enforce` — headless default-deny for CI.** With no operator
+  present, `--enforce` runs the engine with no prompter, so every `ask` resolves
+  to `deny` (deny-by-default) and the run never blocks on a TTY. AgentGate now
+  fits in a pipeline step where there is no one to answer a prompt. `--always`
+  persistence is disabled in this mode (there is no operator to choose `[A]lways`).
+- **`agentgate audit` query filters.** `--decision allow|deny|ask`, `--action
+  exec|fs_write|net_egress`, and `--since <when>` narrow the trail so you can
+  answer "what got blocked?" without grepping. `--since` accepts an RFC3339
+  timestamp, a date (`2026-06-19`), or a duration ago (`2h`, `30m`). `--json`
+  emits the raw JSONL passthrough for piping into other tools.
+
+### Fixed
+
+- **Filesystem sandbox escape via an in-scope symlink.** `WithinScope` /
+  `CheckWrite` confined `fs_write` on the lexical absolute path only and never
+  resolved symlinks, so a symlink living inside the declared scope but pointing
+  outside it let a write escape the sandbox while still presenting an in-scope
+  path. Scope confinement now resolves the scope root and the target's deepest
+  existing ancestor with `filepath.EvalSymlinks` before computing the relative
+  path, and rejects a target that resolves outside scope.
+- **`**` path-glob suffix over-matching as a substring.** A `**` glob accepted
+  its suffix anywhere in the target, so `/proj/**.env` also matched
+  `/proj/.env.backup/passwd`, silently widening allow/scope rules past intent. A
+  non-empty `**` suffix now must anchor to the end of the target — the same
+  over-match class the v0.2.0 host-token fix closed, here for path globs.
+
+[0.3.0]: https://github.com/SuperMarioYL/agentgate/releases/tag/v0.3.0
+
 ## [0.2.0] - 2026-06-19
 
 First feature iteration on top of the initial release.

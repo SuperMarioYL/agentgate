@@ -8,7 +8,7 @@
 
 <p align="center">
   <a href="./LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT" /></a>
-  <a href="https://github.com/SuperMarioYL/agentgate/releases"><img src="https://img.shields.io/badge/release-v0.1.0-2563eb.svg" alt="Release" /></a>
+  <a href="https://github.com/SuperMarioYL/agentgate/releases"><img src="https://img.shields.io/badge/release-v0.3.0-2563eb.svg" alt="Release" /></a>
   <a href="https://github.com/SuperMarioYL/agentgate/actions"><img src="https://img.shields.io/github/actions/workflow/status/SuperMarioYL/agentgate/ci.yml?branch=main&label=CI" alt="CI" /></a>
   <a href="https://go.dev/"><img src="https://img.shields.io/badge/Go-1.24%2B-00ADD8.svg?logo=go&logoColor=white" alt="Go" /></a>
   <img src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS-334155.svg" alt="Platform" />
@@ -82,7 +82,14 @@ Press `a` to allow once, `d` to deny, `A` to always allow (this writes a rule ba
 agentgate audit
 # ✓  13:20:26  exec        allow    npm install chalk
 # ✗  13:20:26  net_egress  deny     telemetry.unknown-host.example
+
+# Just show "what got blocked?" — filter by decision / action / time (v0.3.0)
+agentgate audit --decision deny
+agentgate audit --action net_egress --since 2h
+agentgate audit --decision deny --json   # raw JSONL passthrough for piping
 ```
+
+> `--since` accepts an RFC3339 timestamp, a date (`2026-06-19`), or a duration ago (`2h`, `30m`).
 
 > Interception is portable and ptrace/libpcap-free: a PATH shim forwards each intercepted command to a unix-socket broker that owns the gate decision, and network egress is gated per host through a localhost redirect proxy wired in via `HTTP(S)_PROXY`. See [`examples/claude-code-session.md`](./examples/claude-code-session.md) for the full walkthrough.
 
@@ -128,7 +135,7 @@ rules:
     decision: deny           # undeclared host -> blocked
 ```
 
-Glob semantics: `*` matches a single path/host segment (`filepath.Match` semantics), `**` matches across segments (e.g. `$PWD/**`). A bare host token with no wildcard matches on a **host boundary** — the whole target, or the host part of a `host:port` target (so `registry.npmjs.org` matches `registry.npmjs.org:443`), but it will **not** wave through look-alike hosts such as `github.com.evil.com` or `evilgithub.com`. A leading-dot token (e.g. `.github.com`) matches the whole subdomain tree (`api.github.com`) but not the bare apex `github.com` itself. `agentgate init` drops a sensible built-in default policy you can edit.
+Glob semantics: `*` matches a single path/host segment (`filepath.Match` semantics), `**` matches across segments (e.g. `$PWD/**`); a `**` pattern with a suffix (e.g. `/proj/**.env`) requires the target to *end* with that suffix and will not match it as a mid-string substring (so `/proj/.env.backup/passwd` is not waved through by `/proj/**.env`). A bare host token with no wildcard matches on a **host boundary** — the whole target, or the host part of a `host:port` target (so `registry.npmjs.org` matches `registry.npmjs.org:443`), but it will **not** wave through look-alike hosts such as `github.com.evil.com` or `evilgithub.com`. A leading-dot token (e.g. `.github.com`) matches the whole subdomain tree (`api.github.com`) but not the bare apex `github.com` itself. `agentgate init` drops a sensible built-in default policy you can edit.
 
 ### Dry-run first: `agentgate check`
 
@@ -161,6 +168,18 @@ Common `agentgate run` flags:
 | `--agent` | string | `claude-code` | identifier for the wrapped agent (shown in prompt + audit) |
 | `--no-net` | bool | `false` | disable the network egress gate (gate exec / fs only) |
 | `--always` | bool | `true` | persist `[A]lways` choices back to the policy file |
+| `--enforce` | bool | `false` | headless CI mode: no prompts, every `ask` resolves to `deny` (deny-by-default) |
+
+### Run it in CI: `--enforce`
+
+A CI pipeline has no operator to answer a prompt. `agentgate run --enforce` starts the engine with no prompter — every `ask` falls to `deny` (deny-by-default) and the run **never waits on a TTY**:
+
+```bash
+agentgate run --enforce -- npm ci
+# agentgate: --enforce (headless): no prompts, ask resolves to deny (deny-by-default)
+```
+
+Only actions the policy **explicitly `allow`s** proceed; everything else is blocked and recorded to the audit trail. `--always` persistence is disabled in this mode (there is no operator to choose `[A]lways`).
 
 ## Comparison vs containers / static scanners
 
@@ -180,6 +199,7 @@ An honest read — containers are far more mature at isolation; AgentGate solves
 - [x] **m2 — scope fs & net**: a `policy.yaml` confines filesystem writes to declared paths and gates egress per host, with a JSONL audit log.
 - [x] **m3 — DSL & demo**: the `allow`/`deny`/`ask` DSL + `--always` persistence, an `agentgate init` default policy, a 60s asciinema demo, and the bilingual README.
 - [x] **m4 — author & audit a policy**: `agentgate check` dry-runs any action against the policy, host-boundary egress matching closes the look-alike-host bypass, and `.host` tokens scope rules to a subdomain tree.
+- [x] **m5 — CI & triage**: `agentgate run --enforce` for unattended default-deny (no more blocking on a TTY in CI); `agentgate audit` gains `--decision` / `--action` / `--since` filters and `--json` output; plus two sandbox fixes — a symlink-escape write bypass and a `**` path-glob substring over-match.
 - [ ] Drop-in adapters and README safety-section integration for more harnesses (ECC / openfang).
 - [ ] A policy cookbook: ready-to-use policies that catch real supply-chain behavior.
 - [ ] Team-shared policies / audit dashboard (a v2+ exploration, not the current thesis).
