@@ -11,6 +11,7 @@ package main
 
 import (
 	_ "embed"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -26,7 +27,7 @@ import (
 )
 
 // version is overridden at release time via -ldflags.
-var version = "0.2.0"
+var version = "0.3.0"
 
 //go:embed policy.default.yaml
 var defaultPolicy []byte
@@ -97,12 +98,15 @@ func runCmd() *cobra.Command {
 		agentName  string
 		noNet      bool
 		always     bool
+		enforce    bool
 	)
 	cmd := &cobra.Command{
 		Use:   "run -- <agent command>",
 		Short: "Wrap an agent and gate every subprocess + egress it triggers",
-		Long:  "Launches the given agent command. Each subprocess it spawns and each network host it tries to reach is resolved against the policy before it runs.",
-		Args:  cobra.MinimumNArgs(1),
+		Long: "Launches the given agent command. Each subprocess it spawns and each network host it tries to reach is resolved against the policy before it runs.\n\n" +
+			"Pass --enforce for non-interactive CI: with no operator present, every `ask` " +
+			"resolves to deny (deny-by-default) and the run never blocks on a TTY prompt.",
+		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if policyPath == "" {
 				policyPath = defaultPolicyPath()
@@ -117,9 +121,19 @@ func runCmd() *cobra.Command {
 			}
 			defer lg.Close()
 
-			pr := prompt.New(os.Stdin, os.Stderr)
+			// Headless enforce mode: attach a nil prompter so the engine fails
+			// closed (every `ask` becomes deny) without ever waiting on a TTY,
+			// making agentgate usable in CI where no operator is present.
+			var pr *prompt.Prompter
+			if enforce {
+				fmt.Fprintln(os.Stderr, "agentgate: --enforce (headless): no prompts, ask resolves to deny (deny-by-default)")
+			} else {
+				pr = prompt.New(os.Stdin, os.Stderr)
+			}
 			eng := gate.NewEngine(pol, pr, lg)
-			if always && pol.Path() != "" {
+			// --always persistence requires an operator to choose [A]lways, so it
+			// is meaningless (and disabled) under headless enforce.
+			if always && !enforce && pol.Path() != "" {
 				eng.SetPersistPath(pol.Path())
 			}
 
@@ -153,14 +167,27 @@ func runCmd() *cobra.Command {
 	cmd.Flags().StringVar(&agentName, "agent", "claude-code", "identifier for the wrapped agent")
 	cmd.Flags().BoolVar(&noNet, "no-net", false, "disable the network egress gate")
 	cmd.Flags().BoolVar(&always, "always", true, "persist [A]lways operator choices back to the policy file")
+	cmd.Flags().BoolVar(&enforce, "enforce", false, "headless CI mode: no prompts, every `ask` resolves to deny (deny-by-default)")
 	return cmd
 }
 
 func auditCmd() *cobra.Command {
-	var auditPath string
+	var (
+		auditPath string
+		decision  string
+		action    string
+		since     string
+		jsonOut   bool
+	)
 	cmd := &cobra.Command{
 		Use:   "audit",
-		Short: "Print the JSONL trail of every gated action",
+		Short: "Print (and optionally filter) the JSONL trail of every gated action",
+		Long: "Reads the audit log and prints each gated decision. Filter to answer " +
+			"\"what got blocked?\" without grepping:\n\n" +
+			"  agentgate audit --decision deny\n" +
+			"  agentgate audit --action net_egress --since 2h\n" +
+			"  agentgate audit --decision deny --json   # raw JSONL passthrough\n\n" +
+			"--since accepts an RFC3339 timestamp, a date (2006-01-02), or a duration ago (2h, 30m).",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			entries, err := audit.Read(auditPath)
 			if err != nil {
@@ -170,18 +197,47 @@ func auditCmd() *cobra.Command {
 				}
 				return err
 			}
+
+			sinceT, err := audit.ParseSince(since)
+			if err != nil {
+				return err
+			}
+			filter := audit.Filter{
+				Decision: policy.Decision(decision),
+				Action:   agentctx.ActionKind(action),
+				Since:    sinceT,
+			}
+			if err := filter.Validate(); err != nil {
+				return err
+			}
+			entries = filter.Apply(entries)
+
+			out := cmd.OutOrStdout()
+			if jsonOut {
+				enc := json.NewEncoder(out)
+				for _, e := range entries {
+					if err := enc.Encode(e); err != nil {
+						return err
+					}
+				}
+				return nil
+			}
 			for _, e := range entries {
 				mark := "✓"
 				if e.Decision == policy.Deny {
 					mark = "✗"
 				}
-				fmt.Fprintf(cmd.OutOrStdout(), "%s  %s  %-10s  %-7s  %s\n",
+				fmt.Fprintf(out, "%s  %s  %-10s  %-7s  %s\n",
 					mark, e.Time.Format("15:04:05"), e.Action, e.Decision, e.Target)
 			}
 			return nil
 		},
 	}
 	cmd.Flags().StringVar(&auditPath, "audit", defaultAuditPath(), "audit log path (JSONL)")
+	cmd.Flags().StringVar(&decision, "decision", "", "keep only entries with this decision: allow | deny | ask")
+	cmd.Flags().StringVar(&action, "action", "", "keep only entries with this action: exec | fs_write | net_egress")
+	cmd.Flags().StringVar(&since, "since", "", "keep only entries at/after this time (RFC3339, a date, or a duration ago like 2h)")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit raw JSONL instead of the formatted table")
 	return cmd
 }
 
