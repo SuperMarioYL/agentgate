@@ -112,5 +112,39 @@ func (e *Engine) appendAlwaysRule(req agentctx.GateRequest) {
 	}
 }
 
+// Explanation is the side-effect-free outcome of evaluating a request: the
+// decision the policy reaches, which rule fired (nil for the default), and how
+// it was reached ("rule", "default", or "scope"). It never prompts and never
+// records to the audit log — it backs the `agentgate check` dry-run.
+type Explanation struct {
+	Decision policy.Decision
+	Rule     *policy.Rule
+	Source   string
+}
+
+// Explain resolves a request against the policy without prompting, persisting,
+// or logging. An "ask" rule is reported as Ask (the operator would be prompted
+// at runtime); an fs_write allow that escapes its scope is reported as the
+// scope-downgraded deny, exactly as Decide would apply it.
+func (e *Engine) Explain(req agentctx.GateRequest) Explanation {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	res := e.policy.Resolve(req)
+	source := "rule"
+	if res.FromDefault {
+		source = "default"
+	}
+	decision := res.Decision
+
+	if decision == policy.Allow && req.Action == agentctx.ActionFSWrite && res.Rule != nil {
+		if !res.Rule.WithinScope(req.Target) {
+			decision = policy.Deny
+			source = "scope"
+		}
+	}
+	return Explanation{Decision: decision, Rule: res.Rule, Source: source}
+}
+
 // Policy returns the engine's current (possibly reloaded) policy.
 func (e *Engine) Policy() *policy.Policy { return e.policy }

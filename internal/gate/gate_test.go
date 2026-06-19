@@ -75,6 +75,35 @@ func TestNetGateBlocksUndeclaredHost(t *testing.T) {
 	}
 }
 
+// v0.2.0: Explain is a side-effect-free dry-run — it never prompts, never logs,
+// and reports the same decision (including a scope downgrade) Decide would apply.
+func TestExplainDryRun(t *testing.T) {
+	scope := t.TempDir()
+	src := "default: deny\nrules:\n" +
+		"  - match: {action: net_egress, target_glob: \"registry.npmjs.org\"}\n" +
+		"    decision: allow\n" +
+		"  - match: {action: fs_write, target_glob: \"" + scope + "/**\"}\n" +
+		"    decision: allow\n" +
+		"    scope: \"" + scope + "\"\n"
+	eng, log := newEngine(t, src, "")
+
+	allow := eng.Explain(buildNetReq("registry.npmjs.org:443"))
+	if allow.Decision != policy.Allow || allow.Source != "rule" {
+		t.Fatalf("declared host: want allow/rule, got %s/%s", allow.Decision, allow.Source)
+	}
+	deny := eng.Explain(buildNetReq("evil.example.com:443"))
+	if deny.Decision != policy.Deny || deny.Source != "default" {
+		t.Fatalf("undeclared host: want deny/default, got %s/%s", deny.Decision, deny.Source)
+	}
+	escaped := eng.Explain(agentctx.GateRequest{Action: agentctx.ActionFSWrite, Target: "/etc/passwd"})
+	if escaped.Decision != policy.Deny {
+		t.Fatalf("write outside scope: want deny, got %s", escaped.Decision)
+	}
+	if log.Len() != 0 {
+		t.Fatalf("Explain must not write to the audit log, got:\n%s", log.String())
+	}
+}
+
 // m1+m3: an "ask" decision routed to a deny keypress blocks the action.
 func TestAskOperatorDeny(t *testing.T) {
 	eng, _ := newEngine(t, "default: ask\nrules: []\n", "d\n")

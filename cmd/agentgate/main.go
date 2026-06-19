@@ -14,8 +14,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/SuperMarioYL/agentgate/internal/audit"
+	agentctx "github.com/SuperMarioYL/agentgate/internal/context"
 	"github.com/SuperMarioYL/agentgate/internal/gate"
 	"github.com/SuperMarioYL/agentgate/internal/policy"
 	"github.com/SuperMarioYL/agentgate/internal/prompt"
@@ -24,7 +26,7 @@ import (
 )
 
 // version is overridden at release time via -ldflags.
-var version = "0.1.0"
+var version = "0.2.0"
 
 //go:embed policy.default.yaml
 var defaultPolicy []byte
@@ -49,7 +51,7 @@ func rootCmd() *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: false,
 	}
-	root.AddCommand(runCmd(), initCmd(), auditCmd())
+	root.AddCommand(runCmd(), initCmd(), auditCmd(), checkCmd())
 	return root
 }
 
@@ -181,6 +183,102 @@ func auditCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&auditPath, "audit", defaultAuditPath(), "audit log path (JSONL)")
 	return cmd
+}
+
+func checkCmd() *cobra.Command {
+	var (
+		policyPath string
+		action     string
+	)
+	cmd := &cobra.Command{
+		Use:   "check <target>",
+		Short: "Dry-run how the policy would resolve an action, without running it",
+		Long: "Resolves a hypothetical action against the policy and prints the decision " +
+			"(allow / deny / ask) plus which rule fired — no subprocess is run, no egress " +
+			"is dialed, nothing is written to the audit log.\n\n" +
+			"The target is a command line for --action exec, a path for fs_write, or a " +
+			"host[:port] for net_egress. Use it to sanity-check a policy before trusting an agent to it.\n\n" +
+			"  agentgate check --action exec   \"npm install left-pad\"\n" +
+			"  agentgate check --action net_egress telemetry.evil.example:443\n" +
+			"  agentgate check --action fs_write  /etc/passwd",
+		Args: cobra.MinimumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if policyPath == "" {
+				policyPath = defaultPolicyPath()
+			}
+			pol, err := loadOrDefault(policyPath)
+			if err != nil {
+				return err
+			}
+
+			kind := agentctx.ActionKind(action)
+			req, err := buildCheckRequest(kind, args)
+			if err != nil {
+				return err
+			}
+
+			eng := gate.NewEngine(pol, nil, nil)
+			exp := eng.Explain(req)
+
+			out := cmd.OutOrStdout()
+			fmt.Fprintf(out, "action  : %s\n", req.Action)
+			fmt.Fprintf(out, "target  : %s\n", req.Target)
+			fmt.Fprintf(out, "intent  : %s\n", req.Intent)
+			fmt.Fprintf(out, "decision: %s (%s)\n", exp.Decision, describeSource(exp))
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&policyPath, "policy", "", "policy file (default: ./policy.yaml or $AGENTGATE_POLICY)")
+	cmd.Flags().StringVar(&action, "action", "exec", "action kind: exec | fs_write | net_egress")
+	return cmd
+}
+
+// buildCheckRequest assembles a GateRequest from the check command's flags and
+// positional target, mirroring how each gate constructs its own request so the
+// dry-run resolves identically to a live action.
+func buildCheckRequest(kind agentctx.ActionKind, args []string) (agentctx.GateRequest, error) {
+	switch kind {
+	case agentctx.ActionExec:
+		return agentctx.GateRequest{
+			Action: kind,
+			Target: strings.Join(args, " "),
+			Intent: agentctx.InferIntent(args),
+			Agent:  "check",
+			Args:   args,
+		}, nil
+	case agentctx.ActionFSWrite:
+		abs, err := filepath.Abs(args[0])
+		if err != nil {
+			abs = args[0]
+		}
+		return agentctx.GateRequest{
+			Action: kind,
+			Target: abs,
+			Intent: "agent wants to write " + abs,
+			Agent:  "check",
+		}, nil
+	case agentctx.ActionNetEgress:
+		return agentctx.GateRequest{
+			Action: kind,
+			Target: args[0],
+			Intent: "agent wants to reach " + args[0],
+			Agent:  "check",
+		}, nil
+	default:
+		return agentctx.GateRequest{}, fmt.Errorf("unknown --action %q (want exec | fs_write | net_egress)", kind)
+	}
+}
+
+// describeSource turns an Explanation into a short human reason for the decision.
+func describeSource(exp gate.Explanation) string {
+	switch exp.Source {
+	case "default":
+		return "no rule matched, fell through to default"
+	case "scope":
+		return "matched an allow rule but the path escapes its scope"
+	default:
+		return "matched a rule"
+	}
 }
 
 // loadOrDefault loads the policy file, falling back to the embedded default
