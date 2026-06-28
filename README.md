@@ -157,6 +157,30 @@ agentgate check --action fs_write /etc/passwd
 
 `--action` 取 `exec`（默认）/ `fs_write` / `net_egress`，`--policy` 指定要检查的策略文件。
 
+### 看清自己授权了什么：`agentgate policy`
+
+按了几次 `[A]lways` 之后，规则会悄悄写回 `policy.yaml`——一道运行时门控只有在你能看清它到底会放行什么时才值得信任。`agentgate policy` 按**首条匹配即生效**的顺序打印全部生效规则（含 `--always` 追加的那些）的动作、目标 glob、决策与 scope，最后一行是无规则命中时的默认决策：
+
+```bash
+agentgate policy
+# # effective policy (policy.yaml) — first match wins, top to bottom
+# #    ACTION      TARGET              DECISION  SCOPE
+# 1    net_egress  registry.npmjs.org  allow     -
+# 2    fs_write    /proj/**            allow     /proj
+# 3    exec        npm install*        allow     -
+# *    any         any                 ask       -
+```
+
+加 `--explain` 则只解析一个假想动作，告诉你它会命中哪条规则（复用与 `agentgate check` 相同的无副作用解析器）：
+
+```bash
+agentgate policy --explain --action exec "npm install chalk"
+# decision: allow (matched a rule)
+# matched : action=exec target=npm install* -> allow
+```
+
+> v0.4.0 修复：早先 `[A]lways` 放行一条 exec 时，持久化的是**完整命令行原文**（如 `npm install left-pad`）。它不含通配，于是下一次 `npm install chalk` 命中不了、又来打扰你，`--always` 形同虚设。现在 exec 的 `[A]lways` 会按「二进制 + 子命令」生成可复用 glob（`npm install*`），既覆盖同类后续安装，又不会过宽到放行 `pip install`。
+
 ## 配置项
 
 `agentgate run` 的常用开关：
@@ -200,6 +224,7 @@ agentgate run --enforce -- npm ci
 - [x] **m3 —— DSL & 演示**：`allow`/`deny`/`ask` DSL + `--always` 持久化、`agentgate init` 默认策略、60 秒 asciinema 演示、双语 README。
 - [x] **m4 —— 写策略 & 审策略**：`agentgate check` 对任意动作做 dry-run；egress 按主机边界匹配，堵住伪造主机绕过；`.host` token 把规则限定在子域树内。
 - [x] **m5 —— CI 与排障**：`agentgate run --enforce` 无人值守默认拒绝模式（CI 不再卡在 TTY 提示）；`agentgate audit` 支持按 `--decision` / `--action` / `--since` 过滤与 `--json` 输出；修复符号链接越界写入与 `**` 路径 glob 子串过宽匹配两处沙箱缺陷。
+- [x] **m6 —— 看策略 & 可复用 always**：`agentgate policy` 按生效顺序打印全部规则（含 `--always` 追加项）+ `--explain` 解析单个动作；修复 exec 的 `[A]lways` 持久化命令行原文导致下一次同类安装仍被打扰的缺陷（改为「二进制 + 子命令」可复用 glob）。
 - [ ] 更多 harness 的开箱适配与 README 安全章节集成（ECC / openfang）。
 - [ ] 策略 cookbook：针对真实供应链行为的若干即用策略。
 - [ ] 团队共享策略 / 审计仪表盘（v2+ 探索，非当前论点）。

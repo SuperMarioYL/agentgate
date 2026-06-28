@@ -157,6 +157,30 @@ agentgate check --action fs_write /etc/passwd
 
 `--action` takes `exec` (default) / `fs_write` / `net_egress`; `--policy` selects the file to check.
 
+### See what you've granted: `agentgate policy`
+
+After a few `[A]lways` choices, rules quietly accumulate in `policy.yaml` — a runtime gate is only trustworthy if you can see exactly what it will enforce. `agentgate policy` prints every effective rule (including the ones `--always` appended) in first-match-wins order: action, target glob, decision, and scope, with a final row for the default applied when none match:
+
+```bash
+agentgate policy
+# # effective policy (policy.yaml) — first match wins, top to bottom
+# #    ACTION      TARGET              DECISION  SCOPE
+# 1    net_egress  registry.npmjs.org  allow     -
+# 2    fs_write    /proj/**            allow     /proj
+# 3    exec        npm install*        allow     -
+# *    any         any                 ask       -
+```
+
+Add `--explain` to resolve a single hypothetical action and see which rule it hits (reusing the same side-effect-free resolver as `agentgate check`):
+
+```bash
+agentgate policy --explain --action exec "npm install chalk"
+# decision: allow (matched a rule)
+# matched : action=exec target=npm install* -> allow
+```
+
+> v0.4.0 fix: `[A]lways` on an exec action used to persist the **verbatim command line** (e.g. `npm install left-pad`) as the rule glob. With no wildcards it only ever re-matched that exact argv, so the next `npm install chalk` re-prompted — `--always` did nothing. AgentGate now derives a re-usable glob from the binary + its first subcommand (`npm install*`), covering later installs of the same kind without over-broadening to a different binary (`pip install …` still asks).
+
 ## Configuration
 
 Common `agentgate run` flags:
@@ -200,6 +224,7 @@ An honest read — containers are far more mature at isolation; AgentGate solves
 - [x] **m3 — DSL & demo**: the `allow`/`deny`/`ask` DSL + `--always` persistence, an `agentgate init` default policy, a 60s asciinema demo, and the bilingual README.
 - [x] **m4 — author & audit a policy**: `agentgate check` dry-runs any action against the policy, host-boundary egress matching closes the look-alike-host bypass, and `.host` tokens scope rules to a subdomain tree.
 - [x] **m5 — CI & triage**: `agentgate run --enforce` for unattended default-deny (no more blocking on a TTY in CI); `agentgate audit` gains `--decision` / `--action` / `--since` filters and `--json` output; plus two sandbox fixes — a symlink-escape write bypass and a `**` path-glob substring over-match.
+- [x] **m6 — inspect a policy & re-usable always**: `agentgate policy` prints every effective rule (including `--always`-appended ones) in first-match order, with `--explain` for a single action; fixes `[A]lways` on an exec persisting the verbatim command line (which re-prompted on the next same-kind install) — it now derives a re-usable binary+subcommand glob.
 - [ ] Drop-in adapters and README safety-section integration for more harnesses (ECC / openfang).
 - [ ] A policy cookbook: ready-to-use policies that catch real supply-chain behavior.
 - [ ] Team-shared policies / audit dashboard (a v2+ exploration, not the current thesis).

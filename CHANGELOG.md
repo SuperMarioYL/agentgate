@@ -4,6 +4,37 @@ All notable changes to AgentGate are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-06-29
+
+Makes standing permissions trustworthy: `[A]lways` on a command now actually
+sticks across that kind of command, and you can finally see every rule the gate
+will enforce.
+
+### Added
+
+- **`agentgate policy` — show the effective rule set.** Prints every rule's
+  action, target glob, decision, and scope in first-match-wins order, plus the
+  default applied when none match — including rules an `--always` choice appended,
+  so you can review what you've granted instead of trusting an invisible, growing
+  rule set. `agentgate policy --explain --action <kind> <target>` resolves a single
+  hypothetical action and reports which rule it hits, reusing the same
+  side-effect-free resolver as `agentgate check`.
+
+### Fixed
+
+- **`--always` on an exec action only ever re-matched the exact command line.**
+  Choosing `[A]lways` on `npm install left-pad` persisted the verbatim joined
+  command (`"npm install left-pad"`) as the rule's target glob. That string has no
+  wildcards, so the next install — `npm install chalk`, or even
+  `npm install left-pad --save` — failed to match and re-prompted, defeating the
+  whole point of `--always`. AgentGate now derives a re-usable glob anchored on the
+  binary and its first subcommand (`npm install*`), so an `[A]lways` covers
+  later installs of the same kind without re-broadening to a different binary
+  (`pip install …` still asks). Filesystem (`dir/**`) and network (host token)
+  `--always` rules are unchanged.
+
+[0.4.0]: https://github.com/SuperMarioYL/agentgate/releases/tag/v0.4.0
+
 ## [0.3.0] - 2026-06-19
 
 Hardens the filesystem sandbox, tightens path-glob matching, and makes AgentGate
