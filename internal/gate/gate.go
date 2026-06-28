@@ -6,6 +6,7 @@ package gate
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"github.com/SuperMarioYL/agentgate/internal/audit"
@@ -96,10 +97,7 @@ func (e *Engine) resolveAsk(req agentctx.GateRequest) (policy.Decision, string) 
 // appendAlwaysRule writes an allow rule for the request's action+target to the
 // persisted policy file and reloads the in-memory policy.
 func (e *Engine) appendAlwaysRule(req agentctx.GateRequest) {
-	glob := req.Target
-	if req.Action == agentctx.ActionFSWrite {
-		glob = filepath.Dir(req.Target) + string(os.PathSeparator) + "**"
-	}
+	glob := alwaysGlob(req)
 	rule := policy.Rule{
 		Match:    policy.Match{Action: req.Action, TargetGlob: glob},
 		Decision: policy.Allow,
@@ -110,6 +108,59 @@ func (e *Engine) appendAlwaysRule(req agentctx.GateRequest) {
 	if reloaded, err := policy.Load(e.persist); err == nil {
 		e.policy = reloaded
 	}
+}
+
+// alwaysGlob derives the persisted-rule TargetGlob for an `--always` choice.
+//
+// An exec request's Target is the FULL joined command line (e.g.
+// "npm install left-pad"), which carries no glob wildcards — so persisting it
+// verbatim makes the rule match only that exact argv, and the next invocation
+// ("npm install chalk", or even "npm install left-pad --save") re-prompts,
+// defeating the operator's "stop asking me" intent. For exec we therefore anchor
+// the glob on the binary + its first non-flag subcommand and append "*" (e.g.
+// "npm install*"), so an --always on `npm install left-pad` afterwards covers
+// `npm install chalk` too; with no subcommand we fall back to "<bin> *". fs_write
+// keeps its directory/** scope glob and net_egress keeps the host token verbatim
+// (a bare host already matches host:port via hostTokenMatch).
+func alwaysGlob(req agentctx.GateRequest) string {
+	switch req.Action {
+	case agentctx.ActionFSWrite:
+		return filepath.Dir(req.Target) + string(os.PathSeparator) + "**"
+	case agentctx.ActionExec:
+		bin, sub := execBinAndSub(req)
+		if bin == "" {
+			// No structured argv available — widen the joined target so at least
+			// argument variations after the same prefix re-match.
+			return strings.TrimSpace(req.Target) + "*"
+		}
+		if sub != "" {
+			return bin + " " + sub + "*"
+		}
+		return bin + " *"
+	default:
+		return req.Target
+	}
+}
+
+// execBinAndSub returns the binary name and its first non-flag subcommand for an
+// exec request, preferring the structured Args (set by the wrap broker) and
+// falling back to splitting the joined Target. Either may be empty.
+func execBinAndSub(req agentctx.GateRequest) (bin, sub string) {
+	fields := req.Args
+	if len(fields) == 0 {
+		fields = strings.Fields(req.Target)
+	}
+	if len(fields) == 0 {
+		return "", ""
+	}
+	bin = fields[0]
+	for _, f := range fields[1:] {
+		if !strings.HasPrefix(f, "-") {
+			sub = f
+			break
+		}
+	}
+	return bin, sub
 }
 
 // Explanation is the side-effect-free outcome of evaluating a request: the

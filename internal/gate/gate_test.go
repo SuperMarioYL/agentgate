@@ -195,3 +195,55 @@ func TestAlwaysPersists(t *testing.T) {
 		t.Fatalf("Always did not persist an allow rule: %s", res.Decision)
 	}
 }
+
+// v0.4.0 regression: [A]lways on an exec action must persist a RE-USABLE glob, not
+// the verbatim command line. Pressing [A]lways on `npm install left-pad` previously
+// persisted target_glob="npm install left-pad" (no wildcards) so it only re-matched
+// that exact argv; `npm install chalk` re-prompted, defeating --always. The fix
+// derives "<bin> <subcommand>*" (e.g. "npm install*").
+func TestAlwaysExecPersistsReusableGlob(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "policy.yaml")
+	if err := writeFile(path, "default: ask\nrules: []\n"); err != nil {
+		t.Fatal(err)
+	}
+	pol, _ := policy.Load(path)
+	pr := prompt.New(strings.NewReader("A\n"), new(bytes.Buffer))
+	pr.NoColor = true
+	eng := NewEngine(pol, pr, audit.NewWriter(new(bytes.Buffer)))
+	eng.SetPersistPath(path)
+
+	// Operator presses [A]lways on `npm install left-pad`.
+	first := agentctx.GateRequest{
+		Action: agentctx.ActionExec,
+		Target: "npm install left-pad",
+		Args:   []string{"npm", "install", "left-pad"},
+		Agent:  "claude-code",
+	}
+	if dec, _ := eng.Decide(first); dec != policy.Allow {
+		t.Fatalf("Always on exec should allow, got %s", dec)
+	}
+
+	// A reloaded policy must now auto-ALLOW a sibling install without prompting.
+	reloaded, _ := policy.Load(path)
+	for _, sibling := range []string{"npm install chalk", "npm install left-pad --save"} {
+		res := reloaded.Resolve(agentctx.GateRequest{
+			Action: agentctx.ActionExec,
+			Target: sibling,
+			Args:   strings.Fields(sibling),
+		})
+		if res.Decision != policy.Allow {
+			t.Fatalf("--always on `npm install left-pad` should auto-allow %q (re-usable glob), got %s",
+				sibling, res.Decision)
+		}
+	}
+	// But it must NOT over-broaden to a different binary/subcommand.
+	pip := reloaded.Resolve(agentctx.GateRequest{
+		Action: agentctx.ActionExec,
+		Target: "pip install requests",
+		Args:   []string{"pip", "install", "requests"},
+	})
+	if pip.Decision == policy.Allow {
+		t.Fatal("--always on `npm install` must not allow `pip install requests`")
+	}
+}
