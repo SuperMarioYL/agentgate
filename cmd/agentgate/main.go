@@ -3,6 +3,7 @@
 //	agentgate run -- <agent command>   wrap an agent; gate each subprocess
 //	agentgate init                      drop a default policy.yaml
 //	agentgate audit                     print the JSONL trail of gated actions
+//	agentgate policy                    show the effective rule set (or --explain one action)
 //
 // It gates the subprocesses a coding agent spawns (dependency installs,
 // generated scripts) and its network egress, per action, with the agent's
@@ -27,7 +28,7 @@ import (
 )
 
 // version is overridden at release time via -ldflags.
-var version = "0.3.0"
+var version = "0.4.0"
 
 //go:embed policy.default.yaml
 var defaultPolicy []byte
@@ -52,7 +53,7 @@ func rootCmd() *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: false,
 	}
-	root.AddCommand(runCmd(), initCmd(), auditCmd(), checkCmd())
+	root.AddCommand(runCmd(), initCmd(), auditCmd(), checkCmd(), policyCmd())
 	return root
 }
 
@@ -287,6 +288,76 @@ func checkCmd() *cobra.Command {
 	cmd.Flags().StringVar(&policyPath, "policy", "", "policy file (default: ./policy.yaml or $AGENTGATE_POLICY)")
 	cmd.Flags().StringVar(&action, "action", "exec", "action kind: exec | fs_write | net_egress")
 	return cmd
+}
+
+func policyCmd() *cobra.Command {
+	var (
+		policyPath string
+		explain    bool
+		action     string
+	)
+	cmd := &cobra.Command{
+		Use:   "policy [target]",
+		Short: "Show the effective rule set, or explain how one action resolves",
+		Long: "Prints the effective policy — every rule's action, target glob, decision, and " +
+			"scope, in first-match-wins order, plus the default applied when none match. This " +
+			"includes rules an `--always` operator choice appended, so you can review what you've " +
+			"granted instead of trusting an invisible, growing rule set.\n\n" +
+			"With --explain, resolves a single hypothetical action and prints which rule it hits " +
+			"(reusing the same side-effect-free resolver as `agentgate check`):\n\n" +
+			"  agentgate policy                                  # list every effective rule\n" +
+			"  agentgate policy --explain --action exec \"npm install left-pad\"\n" +
+			"  agentgate policy --explain --action net_egress telemetry.evil.example:443",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if policyPath == "" {
+				policyPath = defaultPolicyPath()
+			}
+			pol, err := loadOrDefault(policyPath)
+			if err != nil {
+				return err
+			}
+			out := cmd.OutOrStdout()
+
+			if explain {
+				if len(args) == 0 {
+					return fmt.Errorf("--explain needs a target (a command line, path, or host[:port])")
+				}
+				kind := agentctx.ActionKind(action)
+				req, err := buildCheckRequest(kind, args)
+				if err != nil {
+					return err
+				}
+				eng := gate.NewEngine(pol, nil, nil)
+				exp := eng.Explain(req)
+				fmt.Fprintf(out, "action  : %s\n", req.Action)
+				fmt.Fprintf(out, "target  : %s\n", req.Target)
+				fmt.Fprintf(out, "decision: %s (%s)\n", exp.Decision, describeSource(exp))
+				if exp.Rule != nil {
+					glob := exp.Rule.Match.TargetGlob
+					if glob == "" {
+						glob = "any"
+					}
+					fmt.Fprintf(out, "matched : action=%s target=%s -> %s\n",
+						dispAction(string(exp.Rule.Match.Action)), glob, exp.Rule.Decision)
+				}
+				return nil
+			}
+
+			return pol.WriteTable(out)
+		},
+	}
+	cmd.Flags().StringVar(&policyPath, "policy", "", "policy file (default: ./policy.yaml or $AGENTGATE_POLICY)")
+	cmd.Flags().BoolVar(&explain, "explain", false, "resolve one hypothetical action and show which rule it hits")
+	cmd.Flags().StringVar(&action, "action", "exec", "with --explain: action kind: exec | fs_write | net_egress")
+	return cmd
+}
+
+// dispAction renders an empty action scope as "any" for the explain output.
+func dispAction(a string) string {
+	if a == "" {
+		return "any"
+	}
+	return a
 }
 
 // buildCheckRequest assembles a GateRequest from the check command's flags and
