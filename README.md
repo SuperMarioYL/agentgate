@@ -179,6 +179,22 @@ agentgate policy --explain --action exec "npm install chalk"
 # matched : action=exec target=npm install* -> allow
 ```
 
+### 撤销一条授权：`agentgate policy rm`
+
+看清规则只是一半——如果发现某个 `[A]lways` 授权得**太宽**，你还得能把它收回来。在 v0.5.0 之前，这意味着手动去改 `policy.yaml`；现在 `agentgate policy rm` 让「撤销一次错误授权」和「当初做出授权」一样简单。按上面列出的 **1 起始序号**删，或按 `--action` + `--target` 精确匹配删；被删的规则和更新后的生效表都会打印出来：
+
+```bash
+# 按序号删（就是 agentgate policy 打印的 # 列）
+agentgate policy rm 3
+# removed rule #3: action=exec target=npm install* -> allow
+# （随后重新打印生效规则表）
+
+# 或按 动作 + 目标 glob 精确匹配删
+agentgate policy rm --action net_egress --target "registry.npmjs.org"
+```
+
+序号越界、默认行（`*`）或匹配不到规则时，命令会给出清晰错误并以非零码退出，且**不改动**策略文件。删掉规则后，它此前自动放行的同类动作会重新回到提示/默认决策——授权是真正被收回了，不是只从表里消失。（本版只做**删除**：改写某条规则或调整顺序仍是删掉再加，或手动编辑 `policy.yaml`。）
+
 > v0.4.0 修复：早先 `[A]lways` 放行一条 exec 时，持久化的是**完整命令行原文**（如 `npm install left-pad`）。它不含通配，于是下一次 `npm install chalk` 命中不了、又来打扰你，`--always` 形同虚设。现在 exec 的 `[A]lways` 会按「二进制 + 子命令」生成可复用 glob（`npm install*`），既覆盖同类后续安装，又不会过宽到放行 `pip install`。
 
 ## 配置项
@@ -225,6 +241,7 @@ agentgate run --enforce -- npm ci
 - [x] **m4 —— 写策略 & 审策略**：`agentgate check` 对任意动作做 dry-run；egress 按主机边界匹配，堵住伪造主机绕过；`.host` token 把规则限定在子域树内。
 - [x] **m5 —— CI 与排障**：`agentgate run --enforce` 无人值守默认拒绝模式（CI 不再卡在 TTY 提示）；`agentgate audit` 支持按 `--decision` / `--action` / `--since` 过滤与 `--json` 输出；修复符号链接越界写入与 `**` 路径 glob 子串过宽匹配两处沙箱缺陷。
 - [x] **m6 —— 看策略 & 可复用 always**：`agentgate policy` 按生效顺序打印全部规则（含 `--always` 追加项）+ `--explain` 解析单个动作；修复 exec 的 `[A]lways` 持久化命令行原文导致下一次同类安装仍被打扰的缺陷（改为「二进制 + 子命令」可复用 glob）。
+- [x] **m7 —— 撤策略（闭合 看→改 回路）**：`agentgate policy rm <序号>` / `--action --target` 从 CLI 撤销一条持久化规则，让收回一次过宽的 `[A]lways` 授权和当初做出它一样简单——不必再手改 `policy.yaml`。
 - [ ] 更多 harness 的开箱适配与 README 安全章节集成（ECC / openfang）。
 - [ ] 策略 cookbook：针对真实供应链行为的若干即用策略。
 - [ ] 团队共享策略 / 审计仪表盘（v2+ 探索，非当前论点）。

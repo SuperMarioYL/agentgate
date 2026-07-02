@@ -179,6 +179,22 @@ agentgate policy --explain --action exec "npm install chalk"
 # matched : action=exec target=npm install* -> allow
 ```
 
+### Revoke a grant: `agentgate policy rm`
+
+Seeing the rules is only half of it — if you find an `[A]lways` grant that turned out **too broad**, you need to take it back. Before v0.5.0 that meant hand-editing `policy.yaml`; now `agentgate policy rm` makes revoking a mistaken grant as easy as making it was. Remove by the **1-based index** listed above, or by an exact `--action` + `--target` match; the removed rule and the updated effective table are both printed:
+
+```bash
+# by index (the # column that `agentgate policy` prints)
+agentgate policy rm 3
+# removed rule #3: action=exec target=npm install* -> allow
+# (then re-prints the effective rule table)
+
+# or match a rule by action + target glob
+agentgate policy rm --action net_egress --target "registry.npmjs.org"
+```
+
+An out-of-range index, the default row (`*`), or a no-match prints a clear error and exits non-zero **without touching** the policy file. Once a rule is removed, the same-kind actions it used to auto-allow go back to prompting / the default decision — the grant is genuinely revoked, not just hidden from the table. (This version does **removal** only: rewriting a rule's decision/glob or reordering rules stays remove-then-re-add, or a hand-edit of `policy.yaml`.)
+
 > v0.4.0 fix: `[A]lways` on an exec action used to persist the **verbatim command line** (e.g. `npm install left-pad`) as the rule glob. With no wildcards it only ever re-matched that exact argv, so the next `npm install chalk` re-prompted — `--always` did nothing. AgentGate now derives a re-usable glob from the binary + its first subcommand (`npm install*`), covering later installs of the same kind without over-broadening to a different binary (`pip install …` still asks).
 
 ## Configuration
@@ -225,6 +241,7 @@ An honest read — containers are far more mature at isolation; AgentGate solves
 - [x] **m4 — author & audit a policy**: `agentgate check` dry-runs any action against the policy, host-boundary egress matching closes the look-alike-host bypass, and `.host` tokens scope rules to a subdomain tree.
 - [x] **m5 — CI & triage**: `agentgate run --enforce` for unattended default-deny (no more blocking on a TTY in CI); `agentgate audit` gains `--decision` / `--action` / `--since` filters and `--json` output; plus two sandbox fixes — a symlink-escape write bypass and a `**` path-glob substring over-match.
 - [x] **m6 — inspect a policy & re-usable always**: `agentgate policy` prints every effective rule (including `--always`-appended ones) in first-match order, with `--explain` for a single action; fixes `[A]lways` on an exec persisting the verbatim command line (which re-prompted on the next same-kind install) — it now derives a re-usable binary+subcommand glob.
+- [x] **m7 — revoke a policy (closing the inspect→edit loop)**: `agentgate policy rm <index>` / `--action --target` revokes a persisted rule from the CLI, so taking back an over-broad `[A]lways` grant is as easy as making it was — no more hand-editing `policy.yaml`.
 - [ ] Drop-in adapters and README safety-section integration for more harnesses (ECC / openfang).
 - [ ] A policy cookbook: ready-to-use policies that catch real supply-chain behavior.
 - [ ] Team-shared policies / audit dashboard (a v2+ exploration, not the current thesis).

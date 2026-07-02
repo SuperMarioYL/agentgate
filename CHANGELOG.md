@@ -4,6 +4,28 @@ All notable changes to AgentGate are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-07-02
+
+Closes the inspect→edit loop `agentgate policy` opened: you can now revoke a
+persisted rule from the CLI, so taking back an over-broad `[A]lways` grant is as
+easy as making it was.
+
+### Added
+
+- **`agentgate policy rm` — revoke a persisted rule.** `agentgate policy` (v0.4.0)
+  let you *see* every rule the gate enforces, but taking one back still meant
+  hand-editing `policy.yaml`. `agentgate policy rm <index>` removes the rule at the
+  1-based index the listing prints, and `agentgate policy rm --action <kind>
+  --target <glob>` removes a rule by an exact action + target-glob match. The removed
+  rule and the updated effective table are printed. An out-of-range index, the
+  default row (`*`), a no-match, or a non-numeric index prints a clear error and
+  exits non-zero **without modifying the policy file**; when no `policy.yaml` exists
+  yet it points you at `agentgate init` rather than pretending to edit the built-in
+  default. Once removed, the same-kind actions the rule used to auto-allow return to
+  prompting / the default decision — the grant is genuinely revoked. Removal only:
+  rewriting or reordering a rule stays remove-then-re-add or a hand-edit. No new
+  dependencies; single binary preserved.
+
 ## [0.4.0] - 2026-06-29
 
 Makes standing permissions trustworthy: `[A]lways` on a command now actually
