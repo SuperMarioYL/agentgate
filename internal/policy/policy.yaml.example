@@ -25,22 +25,34 @@ rules:
       target_glob: "*pip install*"
     decision: ask
 
-  # Block obviously dangerous one-liners outright.
+  # Block the common curl|wget "fetch a remote script and run it" exfil/RCE
+  # one-liners. NOTE: target_glob has NO `|` alternation — filepath.Match treats
+  # `|` as a literal, so a single "*curl*|*sh*" rule only matches a command
+  # containing that exact literal pipe sequence and silently misses a bare
+  # `curl http://evil.com` or a `wget ... | sh`. List the patterns as SEPARATE
+  # rules instead:
   - match:
       action: exec
-      target_glob: "*curl*|*sh*"
+      target_glob: "*curl*"
+    decision: deny
+  - match:
+      action: exec
+      target_glob: "*wget*"
     decision: deny
 
-  # --- fs_write: confine writes to the project directory ------------------
+  # --- fs_write: CHECK/DRY-RUN-ONLY in this version -----------------------
+  # The policy engine and `agentgate check --action fs_write` resolve these
+  # rules, but AgentGate does not yet intercept an agent's actual writes at
+  # runtime (runtime write interposition is roadmapped). We keep only the
+  # documenting allow-scope rule and deliberately omit a blanket `deny fs_write`
+  # here — a rule that pretends to confine writes it can't stop at runtime is a
+  # false promise. Validate write rules with `agentgate check`; don't rely on
+  # them firing on a live run yet.
   - match:
       action: fs_write
       target_glob: "$PWD/**"
     decision: allow
-    scope: "$PWD"          # writes must stay under the project root
-
-  - match:
-      action: fs_write
-    decision: deny          # any write outside the project root is denied
+    scope: "$PWD"          # documents the intended write scope for `agentgate check`
 
   # --- net_egress: allow registries, gate everything else -----------------
   - match:

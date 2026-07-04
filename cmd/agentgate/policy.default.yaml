@@ -10,15 +10,20 @@ rules:
       target_glob: "*install*"
     decision: ask
 
-  # Confine filesystem writes to the project directory; deny the rest.
+  # fs_write is CHECK/DRY-RUN-ONLY in this version: the policy engine and
+  # `agentgate check --action fs_write` resolve these rules, but AgentGate does
+  # NOT yet intercept an agent's actual writes at runtime (runtime write
+  # interposition — ptrace/eBPF/LD_PRELOAD — is roadmapped). So we ship only the
+  # documenting allow-scope rule and deliberately DO NOT ship a blanket
+  # `deny fs_write` catch-all here: a default that pretends to confine writes it
+  # cannot actually stop at runtime is a false security promise. Use
+  # `agentgate check` to validate write rules; do not rely on them being enforced
+  # on a live run yet.
   - match:
       action: fs_write
       target_glob: "$PWD/**"
     decision: allow
     scope: "$PWD"
-  - match:
-      action: fs_write
-    decision: deny
 
   # Allow the common public registries; gate every other host.
   - match:

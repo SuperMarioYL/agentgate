@@ -29,7 +29,7 @@ import (
 )
 
 // version is overridden at release time via -ldflags.
-var version = "0.5.0"
+var version = "0.6.0"
 
 //go:embed policy.default.yaml
 var defaultPolicy []byte
@@ -148,10 +148,11 @@ func runCmd() *cobra.Command {
 			if !noNet {
 				ng := gate.NewNetGate(eng, agentName)
 				addr, err := ng.Listen()
-				if err == nil {
-					runner.NetProxy = addr
-					defer ng.Close()
+				if err != nil {
+					return netGateStartError(err)
 				}
+				runner.NetProxy = addr
+				defer ng.Close()
 			}
 
 			code, err := runner.Run(args)
@@ -437,6 +438,17 @@ func policyRmCmd(sharedPolicyPath *string) *cobra.Command {
 	cmd.Flags().StringVar(&rmAction, "action", "", "match a rule by action: exec | fs_write | net_egress")
 	cmd.Flags().StringVar(&rmTarget, "target", "", "match a rule by its exact target glob (as shown in `agentgate policy`)")
 	return cmd
+}
+
+// netGateStartError builds the fail-CLOSED error returned when the network
+// egress gate cannot bind its redirect proxy. Fixing the earlier fail-OPEN: a
+// swallowed Listen() error used to leave NetProxy empty, so the agent ran with
+// no proxy env and its HTTP(S) egress went out completely ungated with no notice.
+// For a security gate that is unacceptable — we refuse the run and tell the
+// operator to fix the bind or pass --no-net to disable the gate deliberately.
+func netGateStartError(err error) error {
+	return fmt.Errorf("network egress gate failed to start (%w); egress would be ungated. "+
+		"Fix the cause, or pass --no-net to run with the net gate explicitly disabled", err)
 }
 
 // dispAction renders an empty action scope as "any" for the explain output.

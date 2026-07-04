@@ -4,6 +4,51 @@ All notable changes to AgentGate are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-07-04
+
+A security-truth release: four fail-open / false-enforcement defects fixed, plus a
+ready-to-use supply-chain policy cookbook. The theme is honesty — a gate should
+enforce exactly what it claims, and fail closed when it can't.
+
+### Fixed
+
+- **`fs_write` no longer claims runtime enforcement it doesn't have.** The README
+  said writes outside the project root were denied and `agentgate init` shipped a
+  blanket `deny fs_write` catch-all — but no runtime path ever invoked the
+  filesystem gate (it only ran under `agentgate check` and unit tests). `fs_write`
+  is now documented as **CHECK/DRY-RUN-ONLY**: the default policy drops the
+  misleading catch-all, the README security section states the real status, and
+  true runtime write interposition (ptrace/eBPF/LD_PRELOAD) is on the v0.7.0+
+  roadmap. Only `exec` and `net_egress` are runtime-enforced today.
+- **The shim now fails CLOSED when the broker is unreachable.** Previously, if a
+  process was under `agentgate run` (broker socket set) but the broker couldn't be
+  reached — a crashed or killed parent — the shim ran the command **ungated**. A
+  security gate must never silently disable itself: the shim now refuses (exit 126,
+  no exec) with a clear notice, symmetric with the existing deny path.
+- **The example policy's dangerous-one-liner rule actually fires now.** The shipped
+  `policy.yaml.example` used `target_glob: "*curl*|*sh*"`, but the glob matcher has
+  no `|` alternation (`filepath.Match` treats `|` as a literal), so that rule denied
+  *neither* a bare `curl http://evil` *nor* `wget ... | sh`. It's replaced with
+  glob-correct separate `*curl*` / `*wget*` deny rules, and a comment warns that `|`
+  is literal so the mistake isn't reintroduced.
+- **The network gate no longer silently disappears on a bind failure.** If the
+  redirect proxy failed to bind, `agentgate run` swallowed the error and ran the
+  agent with no proxy env — egress went out completely ungated, with no notice. It
+  now fails closed: the run errors out (non-zero exit) and tells you to fix the bind
+  or pass `--no-net` to disable the gate deliberately.
+
+### Added
+
+- **Supply-chain policy cookbook (`examples/policies/supply-chain.yaml`).**
+  Ready-to-use, glob-correct `policy.yaml` recipes for real supply-chain attack
+  behavior — deny `curl`/`wget` fetch-and-run one-liners, surface every dependency
+  install, allowlist registries and deny undeclared egress. Copy the file (or paste
+  the rules you want), then validate with `agentgate check`. A new README "Cookbook"
+  section links each recipe to the attack it stops.
+- **Reinforced boundary.** The out-of-scope ban now explicitly forbids learned /
+  self-tuning authorization boundaries — AgentGate's decisions stay explicit and
+  human-authored, never learned.
+
 ## [0.5.0] - 2026-07-02
 
 Closes the inspect→edit loop `agentgate policy` opened: you can now revoke a

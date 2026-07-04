@@ -1,5 +1,9 @@
 <p align="center">
-  <img src="https://capsule-render.vercel.app/api?type=waving&color=0:1e293b,50:2563eb,100:0ea5e9&height=180&section=header&text=AgentGate&fontColor=ffffff&fontSize=64&fontAlignY=38&desc=%E7%BB%99%E7%BC%96%E7%A0%81%20Agent%20%E7%9A%84%E8%BF%90%E8%A1%8C%E6%97%B6%E4%B8%BB%E6%9C%BA%E6%B2%99%E7%AE%B1&descColor=cbd5e1&descSize=18&descAlignY=60" alt="AgentGate" />
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="./assets/hero-dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset="./assets/hero-light.svg">
+    <img src="./assets/hero-light.svg" width="880" alt="AgentGate — 给编码 Agent 的运行时主机沙箱">
+  </picture>
 </p>
 
 <p align="center">
@@ -8,7 +12,7 @@
 
 <p align="center">
   <a href="./LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT" /></a>
-  <a href="https://github.com/SuperMarioYL/agentgate/releases"><img src="https://img.shields.io/badge/release-v0.3.0-2563eb.svg" alt="Release" /></a>
+  <a href="https://github.com/SuperMarioYL/agentgate/releases"><img src="https://img.shields.io/badge/release-v0.6.0-2563eb.svg" alt="Release" /></a>
   <a href="https://github.com/SuperMarioYL/agentgate/actions"><img src="https://img.shields.io/github/actions/workflow/status/SuperMarioYL/agentgate/ci.yml?branch=main&label=CI" alt="CI" /></a>
   <a href="https://go.dev/"><img src="https://img.shields.io/badge/Go-1.24%2B-00ADD8.svg?logo=go&logoColor=white" alt="Go" /></a>
   <img src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS-334155.svg" alt="Platform" />
@@ -115,15 +119,12 @@ rules:
       target_glob: "*install*"
     decision: ask            # 每次安装都浮现出来，让你看清拉了什么
 
-  # fs_write —— 把写入限制在项目目录内
+  # fs_write —— 仅 check / dry-run（本版尚未运行时强制，见下方安全说明）
   - match:
       action: fs_write
       target_glob: "$PWD/**"
     decision: allow
-    scope: "$PWD"            # 写入必须留在项目根之内
-  - match:
-      action: fs_write
-    decision: deny           # 项目根之外的任何写入一律拒绝
+    scope: "$PWD"            # 记录期望写入范围，供 agentgate check 解析
 
   # net_egress —— 放行常用 registry，门控其余一切
   - match:
@@ -136,6 +137,8 @@ rules:
 ```
 
 Glob 语义：`*` 匹配单个路径 / 主机段（`filepath.Match` 语义），`**` 跨段匹配（如 `$PWD/**`）；带后缀的 `**` 模式（如 `/proj/**.env`）要求 target 以该后缀**结尾**，不会把后缀当作中间子串去命中（即 `/proj/.env.backup/passwd` 不会被 `/proj/**.env` 误放）。不带通配的裸 host token 按**主机边界**匹配——命中整个 target，或 `host:port` 的 host 部分（如 `registry.npmjs.org` 命中 `registry.npmjs.org:443`），但**不会**误放 `github.com.evil.com` 或 `evilgithub.com` 这类伪造主机。以点开头的 token（如 `.github.com`）匹配整棵子域树（`api.github.com`），但不含裸顶级域 `github.com` 本身。`agentgate init` 会落一份内置的合理默认策略，可直接编辑。
+
+> ⚠️ **安全说明 —— 各动作面的强制现状（务必读）。** AgentGate 在运行时**强制**两个面：`exec`（Agent 拉起的子进程，经 PATH shim + broker 逐个裁决）与 `net_egress`（经本地 HTTP(S) 重定向代理按主机门控）。**`fs_write` 目前是 check / dry-run 专用**：策略引擎与 `agentgate check --action fs_write` 会解析写入规则，但本版**尚未**在运行时拦截 Agent 的真实写操作（运行时写入插桩 —— Linux ptrace/eBPF、macOS LD_PRELOAD/sandbox-exec —— 已列入 v0.7.0+ 路线图）。因此 `agentgate init` 的默认策略**不再**附带一条会让人误以为写入被真正拦下的兜底 `deny fs_write`。请用 `agentgate check` 验证写入规则，但**不要**指望它们在真实运行中生效——目前只有 `exec` 与 `net_egress` 是运行时强制的。
 
 ### 先 dry-run 一下：`agentgate check`
 
@@ -197,6 +200,27 @@ agentgate policy rm --action net_egress --target "registry.npmjs.org"
 
 > v0.4.0 修复：早先 `[A]lways` 放行一条 exec 时，持久化的是**完整命令行原文**（如 `npm install left-pad`）。它不含通配，于是下一次 `npm install chalk` 命中不了、又来打扰你，`--always` 形同虚设。现在 exec 的 `[A]lways` 会按「二进制 + 子命令」生成可复用 glob（`npm install*`），既覆盖同类后续安装，又不会过宽到放行 `pip install`。
 
+## 供应链策略 cookbook
+
+从零写策略容易漏。[`examples/policies/supply-chain.yaml`](./examples/policies/supply-chain.yaml) 收录了针对**真实供应链攻击行为**的即用规则——每条都标注了它挡的是哪种攻击，且**全部 glob-正确**（不含 `|` 伪替代，见下）：
+
+| 配方 | 挡住的攻击 |
+| --- | --- |
+| `deny exec *curl*` / `deny exec *wget*` | 装后脚本 `curl http://evil / wget … | sh` 拉远程载荷执行（RCE / 外泄） |
+| `ask exec *npm install*` / `*pip install*` | 每次依赖安装都浮现，看清拉了什么包（typosquat / 投毒） |
+| `deny net_egress` 兜底 + registry 白名单 | 载荷向未声明主机外泄数据 / 回连 C2 |
+| `deny exec *chmod +x*` 等 | 装后脚本给自己提权 / 落可执行文件 |
+
+复制其中一条到你的 `policy.yaml`，再用 `agentgate check` 确认它确实拦下对应命令：
+
+```bash
+cp examples/policies/supply-chain.yaml policy.yaml     # 或把某几条粘进你现有的策略
+agentgate check --action exec -- curl http://evil.example
+# decision: deny (matched a rule)
+```
+
+> **为什么不能用 `*curl*|*sh*` 一条搞定？** glob 匹配器**没有** `|` 替代语义——`filepath.Match` 把 `|` 当**字面字符**。所以 `*curl*|*sh*` 只会命中「命令里恰好含 `curl … | … sh` 这段字面」的情况，`curl http://evil`（无字面竖线）和 `wget … | sh`（无 `curl`）都会**漏过**。cookbook 里一律拆成独立规则（`*curl*`、`*wget*` 各一条），别再把 `|` 当替代用。
+
 ## 配置项
 
 `agentgate run` 的常用开关：
@@ -236,14 +260,15 @@ agentgate run --enforce -- npm ci
 ## 路线图
 
 - [x] **m1 —— wrap & gate exec**：包裹 Agent，拦截它拉起的每个子进程，带意图提示 allow/deny。
-- [x] **m2 —— scope fs & net**：`policy.yaml` 把文件写入限制在声明路径内，按主机门控 egress，并写入 JSONL 审计。
+- [x] **m2 —— scope fs & net**：`policy.yaml` 按主机门控 egress 并写入 JSONL 审计；`fs_write` 规则可由 `agentgate check` 解析（**check / dry-run 专用**，运行时强制见下方 v0.7.0+ 路线图）。
 - [x] **m3 —— DSL & 演示**：`allow`/`deny`/`ask` DSL + `--always` 持久化、`agentgate init` 默认策略、60 秒 asciinema 演示、双语 README。
 - [x] **m4 —— 写策略 & 审策略**：`agentgate check` 对任意动作做 dry-run；egress 按主机边界匹配，堵住伪造主机绕过；`.host` token 把规则限定在子域树内。
 - [x] **m5 —— CI 与排障**：`agentgate run --enforce` 无人值守默认拒绝模式（CI 不再卡在 TTY 提示）；`agentgate audit` 支持按 `--decision` / `--action` / `--since` 过滤与 `--json` 输出；修复符号链接越界写入与 `**` 路径 glob 子串过宽匹配两处沙箱缺陷。
 - [x] **m6 —— 看策略 & 可复用 always**：`agentgate policy` 按生效顺序打印全部规则（含 `--always` 追加项）+ `--explain` 解析单个动作；修复 exec 的 `[A]lways` 持久化命令行原文导致下一次同类安装仍被打扰的缺陷（改为「二进制 + 子命令」可复用 glob）。
 - [x] **m7 —— 撤策略（闭合 看→改 回路）**：`agentgate policy rm <序号>` / `--action --target` 从 CLI 撤销一条持久化规则，让收回一次过宽的 `[A]lways` 授权和当初做出它一样简单——不必再手改 `policy.yaml`。
-- [ ] 更多 harness 的开箱适配与 README 安全章节集成（ECC / openfang）。
-- [ ] 策略 cookbook：针对真实供应链行为的若干即用策略。
+- [x] **m8 —— 供应链策略 cookbook + 安全实话**：附带 [`examples/policies/supply-chain.yaml`](./examples/policies/supply-chain.yaml)（针对真实供应链行为的即用 policy 配方，见下方 [Cookbook](#供应链策略-cookbook)）；同时修正四处安全表述/失效开放缺陷 —— `fs_write` 不再宣称运行时强制（改为 check/dry-run 专用）、broker 不可达时 shim **失败即拒**（不再 ungated 放行）、示例里失效的 `*curl*|*sh*` 规则改为 glob-正确的独立规则、net 代理绑定失败时**报错退出**（不再静默放行 egress）。
+- [ ] **运行时 fs_write 强制（v0.7.0+）**：Linux ptrace/eBPF、macOS LD_PRELOAD/sandbox-exec 写入插桩，让 `fs_write` 从 check-only 升级为真正的运行时拦截。
+- [ ] 更多 harness 的开箱适配与 README 安全章节集成（ECC / openfang，v0.7.0）。
 - [ ] 团队共享策略 / 审计仪表盘（v2+ 探索，非当前论点）。
 
 > 推送仓库后可设置 GitHub topics：`gh repo edit --add-topic agent --add-topic coding-agent --add-topic security --add-topic sandbox`

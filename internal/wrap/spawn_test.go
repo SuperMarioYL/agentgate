@@ -93,6 +93,33 @@ func TestBrokerAskAllow(t *testing.T) {
 	}
 }
 
+// v0.6.0 security fix: when AGENTGATE_BROKER is set (the process IS under
+// `agentgate run`) but the broker is unreachable, the shim must FAIL CLOSED —
+// return 126 (blocked) WITHOUT exec'ing the real binary ungated. Point the shim
+// at a socket path that does not exist; a successful exec would replace the test
+// process (or run the real binary), so reaching the assertion at all proves we
+// did not exec.
+func TestShimFailsClosedWhenBrokerUnreachable(t *testing.T) {
+	dead := filepath.Join(t.TempDir(), "nonexistent-broker.sock")
+	t.Setenv("AGENTGATE_BROKER", dead)
+
+	// Use a command that is NOT on PATH so that, even if fail-closed regressed to
+	// execReal, execReal would return 127 (not found) rather than replacing the
+	// process — either way the code we assert on runs. The point of the assertion
+	// is the 126 (fail-closed), distinct from 127 (would-have-exec'd-but-missing).
+	code := ShimMain([]string{"npm", "install", "left-pad"})
+	if code != 126 {
+		t.Fatalf("broker unreachable must fail closed with 126 (no ungated exec), got %d", code)
+	}
+}
+
+// The helper itself: fail-closed returns 126 and never runs anything.
+func TestBrokerUnreachableReturns126(t *testing.T) {
+	if code := brokerUnreachable([]string{"curl", "http://evil"}, net.ErrClosed); code != 126 {
+		t.Fatalf("brokerUnreachable must return 126, got %d", code)
+	}
+}
+
 func TestInterceptedCommandsNonEmpty(t *testing.T) {
 	if len(InterceptedCommands) == 0 {
 		t.Fatal("no intercepted commands configured")

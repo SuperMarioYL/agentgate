@@ -215,15 +215,21 @@ func ShimMain(args []string) int {
 		return execReal(name, rest)
 	}
 
+	full := append([]string{name}, rest...)
 	conn, err := net.Dial("unix", sock)
 	if err != nil {
-		return execReal(name, rest)
+		// The process IS under `agentgate run` (AGENTGATE_BROKER is set) but the
+		// broker is unreachable — fail CLOSED. Running the real binary here would
+		// exec it ungated (no policy check), which for a security gate is worse
+		// than refusing: a crashed/killed broker must not silently disable the
+		// gate. This mirrors the reply-decode path below, which already denies on
+		// a decode failure.
+		return brokerUnreachable(full, err)
 	}
 	cwd, _ := os.Getwd()
-	full := append([]string{name}, rest...)
 	if err := json.NewEncoder(conn).Encode(brokerRequest{Args: full, Cwd: cwd}); err != nil {
 		_ = conn.Close()
-		return execReal(name, rest)
+		return brokerUnreachable(full, err)
 	}
 	var reply brokerReply
 	_ = json.NewDecoder(conn).Decode(&reply)
@@ -234,6 +240,17 @@ func ShimMain(args []string) int {
 		return 126
 	}
 	return execReal(name, rest)
+}
+
+// brokerUnreachable is the fail-closed path for a shim that is under `agentgate
+// run` (AGENTGATE_BROKER set) but cannot reach the broker to get a verdict. It
+// refuses to run the command ungated: it prints a clear notice and returns 126
+// (the same "blocked" code the deny path uses) WITHOUT exec'ing the real binary.
+func brokerUnreachable(full []string, err error) int {
+	fmt.Fprintf(os.Stderr,
+		"agentgate: broker unreachable, refusing to run %q ungated (fail-closed): %v\n",
+		strings.Join(full, " "), err)
+	return 126
 }
 
 // execReal finds the real binary for name (skipping the shim dir at the head of

