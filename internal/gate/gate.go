@@ -4,6 +4,7 @@
 package gate
 
 import (
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -120,8 +121,17 @@ func (e *Engine) appendAlwaysRule(req agentctx.GateRequest) {
 // the glob on the binary + its first non-flag subcommand and append "*" (e.g.
 // "npm install*"), so an --always on `npm install left-pad` afterwards covers
 // `npm install chalk` too; with no subcommand we fall back to "<bin> *". fs_write
-// keeps its directory/** scope glob and net_egress keeps the host token verbatim
-// (a bare host already matches host:port via hostTokenMatch).
+// keeps its directory/** scope glob.
+//
+// A net_egress request's Target is `host:port` at runtime (the redirect proxy
+// passes r.Host, which is host:port for a CONNECT — the dominant HTTPS case), so
+// persisting it verbatim makes [A]lways on `registry.npmjs.org:443` match only
+// that exact port and re-prompt on `:80` (HTTP / an HTTPS→HTTP redirect, both
+// common for registry mirrors) — the same verbatim-target class the exec case
+// above corrects. We therefore strip the port and persist the BARE host; the
+// matcher's hostTokenMatch already matches a bare host against any host:port for
+// that host across ports, and rejects suffix/prefix splices (`.evil.com` /
+// `notgithub.com`), so a bare host is the correct, safe, re-usable glob.
 func alwaysGlob(req agentctx.GateRequest) string {
 	switch req.Action {
 	case agentctx.ActionFSWrite:
@@ -137,6 +147,14 @@ func alwaysGlob(req agentctx.GateRequest) string {
 			return bin + " " + sub + "*"
 		}
 		return bin + " *"
+	case agentctx.ActionNetEgress:
+		// Strip the port and persist the bare host so [A]lways covers the host on
+		// any port, not just the one this connection happened to use. Fall back to
+		// the target verbatim if it carries no port (already a bare host).
+		if h, _, err := net.SplitHostPort(req.Target); err == nil {
+			return h
+		}
+		return req.Target
 	default:
 		return req.Target
 	}

@@ -122,16 +122,24 @@ func (r *Runner) Run(argv []string) (int, error) {
 // childEnv constructs the environment for the wrapped agent: PATH gets the shim
 // dir prepended, the broker socket + agent identity are exported, and the net
 // proxy (if any) is wired through HTTP(S)_PROXY.
+//
+// The operator's pre-existing HTTP(S)_PROXY env vars are dropped ONLY when the net
+// gate is on (r.NetProxy != "") — the gate replaces the proxy. Under `--no-net`
+// (r.NetProxy == "") they are PRESERVED, so an operator behind a corporate or
+// upstream proxy keeps it instead of having it silently stripped (v0.7.0: the
+// unconditional drop broke --no-net runs that relied on an upstream proxy).
 func (r *Runner) childEnv(shimDir, sockPath string) []string {
 	env := os.Environ()
 	out := env[:0]
+	gateOn := r.NetProxy != ""
 	for _, kv := range env {
 		switch {
 		case strings.HasPrefix(kv, "PATH="):
 			out = append(out, "PATH="+shimDir+string(os.PathListSeparator)+kv[len("PATH="):])
-		case strings.HasPrefix(kv, "HTTP_PROXY="), strings.HasPrefix(kv, "HTTPS_PROXY="),
-			strings.HasPrefix(kv, "http_proxy="), strings.HasPrefix(kv, "https_proxy="):
-			// drop; we re-add below if a proxy is configured
+		case gateOn && (strings.HasPrefix(kv, "HTTP_PROXY=") || strings.HasPrefix(kv, "HTTPS_PROXY=") ||
+			strings.HasPrefix(kv, "http_proxy=") || strings.HasPrefix(kv, "https_proxy=")):
+			// Net gate on: drop the operator's proxy; we re-add ours below.
+			// Under --no-net fall through to default so the operator's proxy survives.
 		default:
 			out = append(out, kv)
 		}

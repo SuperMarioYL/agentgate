@@ -5,11 +5,13 @@
 package audit
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -77,7 +79,15 @@ func (l *Logger) Close() error {
 	return nil
 }
 
-// Read parses every entry from a JSONL audit log.
+// Read parses every entry from a JSONL audit log. It is robust to a single
+// malformed or truncated line — the common case being a partial TRAILING entry
+// left behind when an agent run is SIGKILLed mid-write: malformed lines are
+// skipped rather than aborting the whole read, so `agentgate audit` stays
+// readable after a crash. Valid entries before and after a bad line are returned.
+//
+// An append-only JSONL log's value is durability; one truncated byte must not make
+// the entire trail unreadable (the v0.6.0 json.NewDecoder+dec.More loop aborted on
+// the first malformed line, and auditCmd treated any error as fatal).
 func Read(path string) ([]Entry, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -85,13 +95,26 @@ func Read(path string) ([]Entry, error) {
 	}
 	defer f.Close()
 	var entries []Entry
-	dec := json.NewDecoder(f)
-	for dec.More() {
+	sc := bufio.NewScanner(f)
+	// A single JSONL entry can be large (a long argv / intent string); raise the
+	// per-line limit so we don't skip a legitimate entry under the default 64KiB cap.
+	sc.Buffer(make([]byte, 0, 64*1024), 1<<20) // 1 MiB max per line
+	for sc.Scan() {
+		line := strings.TrimSpace(sc.Text())
+		if line == "" {
+			continue
+		}
 		var e Entry
-		if err := dec.Decode(&e); err != nil {
-			return entries, fmt.Errorf("decode audit entry: %w", err)
+		if err := json.Unmarshal([]byte(line), &e); err != nil {
+			// Skip malformed lines instead of aborting the read; a truncated trailing
+			// entry must not make the whole trail unreadable.
+			continue
 		}
 		entries = append(entries, e)
+	}
+	// A real I/O error (not a malformed line) still propagates.
+	if err := sc.Err(); err != nil {
+		return entries, fmt.Errorf("read audit log: %w", err)
 	}
 	return entries, nil
 }

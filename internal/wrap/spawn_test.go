@@ -134,3 +134,45 @@ func TestInterceptedCommandsNonEmpty(t *testing.T) {
 		t.Fatal("npm must be intercepted")
 	}
 }
+
+// v0.7.0 regression: under `agentgate run --no-net` (NetProxy empty), the
+// operator's pre-existing HTTP(S)_PROXY env vars must be PRESERVED, not silently
+// stripped. The unconditional drop was only meant for the net-gate-on path; a
+// --no-net run behind a corporate/upstream proxy used to lose the proxy and fail.
+func TestChildEnvNoNetPreservesOperatorProxy(t *testing.T) {
+	t.Setenv("HTTP_PROXY", "corp-proxy:8080")
+	t.Setenv("HTTPS_PROXY", "corp-proxy:8443")
+	t.Setenv("http_proxy", "corp-proxy:8080")
+	t.Setenv("https_proxy", "corp-proxy:8443")
+	r := &Runner{Agent: "claude-code"} // NetProxy == "" simulates --no-net
+
+	env := r.childEnv("/tmp/agentgate-shim", "/tmp/agentgate-shim/broker.sock")
+	joined := strings.Join(env, "\n")
+	for _, want := range []string{
+		"HTTP_PROXY=corp-proxy:8080",
+		"HTTPS_PROXY=corp-proxy:8443",
+		"http_proxy=corp-proxy:8080",
+		"https_proxy=corp-proxy:8443",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("--no-net should preserve operator proxy; missing %q in:\n%s", want, joined)
+		}
+	}
+}
+
+// v0.7.0 companion: with the net gate ON (NetProxy set), the operator's proxy
+// MUST be replaced by the gate address — the drop is intentional on this path.
+// Regression guard so the --no-net fix does not weaken the gate-on behaviour.
+func TestChildEnvNetGateReplacesOperatorProxy(t *testing.T) {
+	t.Setenv("HTTPS_PROXY", "corp-proxy:8443") // operator's own proxy
+	r := &Runner{Agent: "claude-code", NetProxy: "127.0.0.1:9000"}
+
+	env := r.childEnv("/tmp/agentgate-shim", "/tmp/agentgate-shim/broker.sock")
+	joined := strings.Join(env, "\n")
+	if strings.Contains(joined, "corp-proxy:8443") {
+		t.Fatalf("net gate on: operator's proxy must be replaced, not kept:\n%s", joined)
+	}
+	if !strings.Contains(joined, "HTTPS_PROXY=http://127.0.0.1:9000") {
+		t.Fatalf("net gate on: gate address must be set as HTTPS_PROXY:\n%s", joined)
+	}
+}

@@ -247,3 +247,46 @@ func TestAlwaysExecPersistsReusableGlob(t *testing.T) {
 		t.Fatal("--always on `npm install` must not allow `pip install requests`")
 	}
 }
+
+// v0.7.0 regression: [A]lways on a net_egress action must persist the BARE HOST,
+// not a port-locked host:port glob. The runtime net_egress Target is host:port
+// (the redirect proxy passes r.Host, which is host:port for a CONNECT — the
+// dominant HTTPS case), so persisting it verbatim made [A]lways on
+// `registry.npmjs.org:443` match only :443 and re-prompt on :80 / :8443 — the same
+// verbatim-target class the v0.4.0 exec fix corrected. The fix strips the port;
+// hostTokenMatch still rejects suffix/prefix splices.
+func TestAlwaysNetEgressPersistsBareHost(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "policy.yaml")
+	if err := writeFile(path, "default: ask\nrules: []\n"); err != nil {
+		t.Fatal(err)
+	}
+	pol, _ := policy.Load(path)
+	pr := prompt.New(strings.NewReader("A\n"), new(bytes.Buffer))
+	pr.NoColor = true
+	eng := NewEngine(pol, pr, audit.NewWriter(new(bytes.Buffer)))
+	eng.SetPersistPath(path)
+
+	// Operator presses [A]lways on an egress to api.example.com:443.
+	ng := NewNetGate(eng, "claude-code")
+	if ok, _ := ng.CheckHost("api.example.com:443", "first time"); !ok {
+		t.Fatal("Always on net_egress should allow")
+	}
+
+	// A reloaded policy must now auto-ALLOW the host on OTHER ports (the fix
+	// strips :443 from the persisted glob), instead of re-prompting.
+	reloaded, _ := policy.Load(path)
+	for _, hp := range []string{"api.example.com:80", "api.example.com:8443", "api.example.com"} {
+		res := reloaded.Resolve(buildNetReq(hp))
+		if res.Decision != policy.Allow {
+			t.Fatalf("--always on api.example.com:443 should auto-allow %q (bare host), got %s", hp, res.Decision)
+		}
+	}
+	// And it must NOT over-broaden to a host that merely ends with / contains the token.
+	for _, evil := range []string{"api.example.com.evil.com:443", "notapi.example.com:443"} {
+		res := reloaded.Resolve(buildNetReq(evil))
+		if res.Decision == policy.Allow {
+			t.Fatalf("bare-host glob must not match suffix/prefix attack %q", evil)
+		}
+	}
+}

@@ -4,6 +4,36 @@ All notable changes to AgentGate are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-07-21
+
+A correctness and durability release: three verified, revert-tested defects from
+the source bug-hunt. No new surface, no new deps. The theme is that a gate's
+promises and its operator's environment should survive real-world failure modes.
+
+### Fixed
+
+- **`agentgate audit` no longer goes unreadable after a crash.** The audit log
+  reader aborted on the first malformed JSONL line, and `agentgate audit`
+  treated any error as fatal — so a single truncated trailing entry (the common
+  case when an agent run is SIGKILLed mid-write) made the entire audit trail
+  unreadable. `Read` now walks the file line by line, skips and counts malformed
+  lines, and returns every valid entry before and after the bad one. An
+  append-only log's value is durability; one truncated byte must not nuke it.
+- **`--always` on a network egress now persists the bare host, not a
+  port-locked `host:port` glob.** At runtime a `net_egress` target is `host:port`
+  (the redirect proxy passes `r.Host`, which is `host:port` for a CONNECT), so
+  `[A]lways` on `registry.npmjs.org:443` previously matched only `:443` and
+  re-prompted on `:80` (HTTP / an HTTPS→HTTP redirect, both common for registry
+  mirrors) — the same verbatim-target class v0.4.0 fixed for exec. The
+  persisted glob now strips the port; the host matcher already rejects
+  suffix/prefix splices, so a bare host is safe and covers any port.
+- **`agentgate run --no-net` no longer strips the operator's proxy.** The
+  child environment dropped every pre-existing `HTTP(S)_PROXY` variable
+  unconditionally, even when the net gate was off — so an operator behind a
+  corporate or upstream proxy had it silently removed and the agent's egress
+  broke. The drop is now conditional on the net gate being on; under `--no-net`
+  the operator's proxy is preserved.
+
 ## [0.6.0] - 2026-07-04
 
 A security-truth release: four fail-open / false-enforcement defects fixed, plus a
