@@ -1,0 +1,61 @@
+{
+  "schema": 1,
+  "name": "agentgate",
+  "github": "https://github.com/SuperMarioYL/agentgate",
+  "host": "agentgate.lei6393.com",
+  "lang": { "primary": "zh", "toggle": true },
+  "accent": ["#e8a13a", "#c9742a", "#9b4a2a"],
+  "hero": {
+    "eyebrow": { "zh": "本地 · 无账号 · 单二进制", "en": "Local · No account · One binary" },
+    "headline": {
+      "zh": "Agent 拉依赖、跑脚本时\n先问过你再动手",
+      "en": "Before your agent runs an install\nor a script, it asks you first"
+    },
+    "sub": {
+      "zh": "给编码 Agent 一道运行时护栏：每次拉依赖、执行脚本、发网络请求，都按动作征求你的授权，而不是全有或全无。",
+      "en": "A runtime guardrail for coding agents: every dependency install, script run, and network request asks for your okay, one action at a time instead of all-or-nothing."
+    },
+    "command": "agentgate run -- claude \"add a chart library and wire it up\"",
+    "cta": { "zh": "看 60 秒演示", "en": "Watch the 60s demo" },
+    "ctaGithub": { "zh": "GitHub 项目", "en": "GitHub project" },
+    "scroll": { "zh": "往下看它挡了什么", "en": "See what it blocks" }
+  },
+  "advantages": [
+    {
+      "title": { "zh": "装包之前先停下", "en": "Pauses before an install" },
+      "body": {
+        "zh": "Agent 决定装某个依赖时，AgentGate 把它拦下来，告诉你它想装什么、为什么，再由你点头放行。装一个被污染的包，不会在 72 个仓库被锁之后才发现。",
+        "en": "When the agent decides to install a dependency, AgentGate pauses it, shows what it wants to install and why, and waits for your okay. A poisoned package is caught at execution, not after 72 repos are disabled."
+      },
+      "chips": ["› npm install left-pad", "› pip install requests", "› cargo add serde"]
+    },
+    {
+      "title": { "zh": "不该发的外发，挡在门口", "en": "Stops egress you never allowed" },
+      "body": {
+        "zh": "一个被装进来的依赖想往没声明过的主机回连或外发数据？AgentGate 在它出门之前就挡住，并写进审计。你声明过哪些注册源，就只放行哪些。",
+        "en": "A dependency that phones home or exfiltrates to a host you never declared? AgentGate blocks it before it leaves and writes it to the audit. Only the registries you list get out."
+      },
+      "chips": ["› 挡住未声明的主机", "› 允许 registry.npmjs.org", "› 每条外发留痕"]
+    },
+    {
+      "title": { "zh": "你点过头的，看得见也收得回", "en": "Your grants are visible and revocable" },
+      "body": {
+        "zh": "选过「总是允许」的规则会积起来。一条命令看清现在到底放行了什么，再一条命令把放太宽的撤回——给错的授权，和给出去一样容易收回。",
+        "en": "An \"always allow\" adds up. One command shows exactly what you've let through; another takes an over-broad grant back — a mistaken okay is as easy to revoke as it was to make."
+      },
+      "chips": ["› agentgate policy", "› agentgate policy rm 2", "› agentgate audit"]
+    }
+  ],
+  "scene": {
+    "kind": "hub-nodes",
+    "nodes": ["npm", "pip", "cargo", "go", "curl", "node", "python"]
+  },
+  "cta": {
+    "headline": { "zh": "让 Agent 自主跑，主机底线你守", "en": "Let the agent run free — you hold the host line" },
+    "sub": { "zh": "MIT 开源 · 单二进制 · Linux + macOS", "en": "MIT open source · single binary · Linux + macOS" },
+    "button": { "zh": "去 GitHub", "en": "Get it on GitHub" }
+  },
+  "footer": {
+    "tag": { "zh": "给编码 Agent 用的运行时主机沙箱", "en": "A runtime host sandbox for coding agents" }
+  }
+}
