@@ -56,7 +56,7 @@ This is **not** a static dependency scanner. Supply-chain worms like Miasma targ
   </picture>
 </p>
 
-The coding agent runs behind the gate: every subprocess it spawns is caught by a **PATH shim**, and every network call is redirected through an injected **HTTP(S) proxy**. Both paths converge on a single **unix-socket broker / Gate Engine** that resolves each action against `policy.yaml` first-match-wins — prompting `[a]llow / [d]eny / [A]lways` when needed. An allowed action `exec`s the real binary and proceeds; a denied one never lands. Every verdict is appended to a **JSONL audit log** you can replay with `agentgate audit`.
+The coding agent runs behind the gate: subprocesses on the **configured shim list** (npm, pip, curl, wget, …) are caught by a **PATH shim** — custom binaries and direct shell spawns run ungated; universal exec interposition is on the roadmap — and every network call is redirected through an injected **HTTP(S) proxy**. Both paths converge on a single **unix-socket broker / Gate Engine** that resolves each action against `policy.yaml` first-match-wins — prompting `[a]llow / [d]eny / [A]lways` when needed. An allowed action `exec`s the real binary and proceeds; a denied one never lands. Every verdict is appended to a **JSONL audit log** you can replay with `agentgate audit`.
 
 ## Quickstart
 
@@ -259,7 +259,7 @@ An honest read — containers are far more mature at isolation; AgentGate solves
 
 ## Roadmap
 
-- [x] **m1 — wrap & gate exec**: wrap an agent, intercept each subprocess it spawns, prompt allow/deny with the captured intent.
+- [x] **m1 — wrap & gate exec**: wrap an agent, intercept the configured shim list (npm, pip, curl, wget, …) — custom binaries and direct shell spawns run ungated; universal exec interposition is on the roadmap — prompt allow/deny with the captured intent.
 - [x] **m2 — scope fs & net**: a `policy.yaml` gates egress per host with a JSONL audit log; `fs_write` rules are resolvable via `agentgate check` (**check/dry-run-only** — runtime enforcement is on the v0.7.0+ roadmap below).
 - [x] **m3 — DSL & demo**: the `allow`/`deny`/`ask` DSL + `--always` persistence, an `agentgate init` default policy, a 60s asciinema demo, and the bilingual README.
 - [x] **m4 — author & audit a policy**: `agentgate check` dry-runs any action against the policy, host-boundary egress matching closes the look-alike-host bypass, and `.host` tokens scope rules to a subdomain tree.

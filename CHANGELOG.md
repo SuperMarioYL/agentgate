@@ -4,6 +4,70 @@ All notable changes to AgentGate are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] - 2026-07-25
+
+A truth-and-durability release: three fixes, no new surface, no new deps. The
+theme is that a gate's documented claims, its persisted state, and its shipped
+policy must all actually do what they say.
+
+### Fixed
+
+- **The exec gate no longer claims to intercept every subprocess.** The README
+  (architecture overview + m1 roadmap line, both languages) said the gate
+  "intercepts every subprocess" an agent spawns. In fact `wrap.InterceptedCommands`
+  only shims a hardcoded list (npm/pnpm/yarn/bun, pip/pip3/uv/poetry, gem/cargo/go,
+  node/python/python3/ruby, curl/wget). The docs now honestly scope the exec claim
+  to that configured shim list and call out that custom binaries and direct shell
+  spawns run ungated — universal exec interposition is on the roadmap. `spawn.go`
+  is unchanged; this is a docs/truth fix only.
+- **Persisted policy writes are now atomic.** `policy.Append` (the `--always`
+  persist path the gate engine calls) and `policy.Save` (the `agentgate policy rm`
+  write path) used plain `os.WriteFile`, so a crash mid-write left a torn /
+  truncated `policy.yaml` that `Load` would then reject — an operator's granted
+  rules could vanish on the next restart. Both now write to a temp file in the
+  same directory, `fsync`, `chmod`, and `os.Rename` over the target, so readers
+  see either the previous good state or the fully new state, never a partial.
+  The destination mode is normalised to 0o644 regardless of any pre-existing
+  file's mode (the old `os.WriteFile` only applied `perm` on create, leaving a
+  stricter seed untouched).
+- **`fs_write` `target_glob` now expands env vars.** `Rule.matches` matched a
+  rule's `TargetGlob` literally, while `scope.go` already expanded env vars in a
+  `Scope`. The shipped `$PWD/**` allow rule in `policy.default.yaml` and
+  `policy.yaml.example` was therefore a dead letter: a literal `$PWD/**` is not
+  a prefix of any real path, so it matched nothing. `matches` now applies
+  `os.ExpandEnv` to the glob before `globMatch`, mirroring `scope.go`, so
+  `$PWD/**` genuinely covers the working directory.
+
+## [0.7.0] - 2026-07-21
+
+A correctness and durability release: three verified, revert-tested defects from
+the source bug-hunt. No new surface, no new deps. The theme is that a gate's
+promises and its operator's environment should survive real-world failure modes.
+
+### Fixed
+
+- **`agentgate audit` no longer goes unreadable after a crash.** The audit log
+  reader aborted on the first malformed JSONL line, and `agentgate audit`
+  treated any error as fatal — so a single truncated trailing entry (the common
+  case when an agent run is SIGKILLed mid-write) made the entire audit trail
+  unreadable. `Read` now walks the file line by line, skips and counts malformed
+  lines, and returns every valid entry before and after the bad one. An
+  append-only log's value is durability; one truncated byte must not nuke it.
+- **`--always` on a network egress now persists the bare host, not a
+  port-locked `host:port` glob.** At runtime a `net_egress` target is `host:port`
+  (the redirect proxy passes `r.Host`, which is `host:port` for a CONNECT), so
+  `[A]lways` on `registry.npmjs.org:443` previously matched only `:443` and
+  re-prompted on `:80` (HTTP / an HTTPS→HTTP redirect, both common for registry
+  mirrors) — the same verbatim-target class v0.4.0 fixed for exec. The
+  persisted glob now strips the port; the host matcher already rejects
+  suffix/prefix splices, so a bare host is safe and covers any port.
+- **`agentgate run --no-net` no longer strips the operator's proxy.** The
+  child environment dropped every pre-existing `HTTP(S)_PROXY` variable
+  unconditionally, even when the net gate was off — so an operator behind a
+  corporate or upstream proxy had it silently removed and the agent's egress
+  broke. The drop is now conditional on the net gate being on; under `--no-net`
+  the operator's proxy is preserved.
+
 ## [0.6.0] - 2026-07-04
 
 A security-truth release: four fail-open / false-enforcement defects fixed, plus a

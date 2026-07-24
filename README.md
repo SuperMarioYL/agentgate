@@ -56,7 +56,7 @@
   </picture>
 </p>
 
-编码 Agent 跑在护栏后面：它拉起的每个子进程被 **PATH shim** 截获，每个网络请求被注入的 **HTTP(S) 代理**重定向到本地。两条路径都汇到一个 **unix-socket broker / Gate Engine**，由它按 `policy.yaml` 做首条匹配即生效的裁决——必要时弹出 `[a]llow / [d]eny / [A]lways` 提示。放行的动作才 `exec` 真实二进制并继续，拒绝的从不落地；每一笔裁决都追加进 **JSONL 审计日志**，事后用 `agentgate audit` 回看。
+编码 Agent 跑在护栏后面：它拉起的**已配置 shim 列表**（npm、pip、curl、wget、……）上的子进程被 **PATH shim** 截获——自定义二进制和直接 shell spawn 不受门控；通用 exec 插桩在路线图上——每个网络请求被注入的 **HTTP(S) 代理**重定向到本地。两条路径都汇到一个 **unix-socket broker / Gate Engine**，由它按 `policy.yaml` 做首条匹配即生效的裁决——必要时弹出 `[a]llow / [d]eny / [A]lways` 提示。放行的动作才 `exec` 真实二进制并继续，拒绝的从不落地；每一笔裁决都追加进 **JSONL 审计日志**，事后用 `agentgate audit` 回看。
 
 ## 快速开始
 
@@ -259,7 +259,7 @@ agentgate run --enforce -- npm ci
 
 ## 路线图
 
-- [x] **m1 —— wrap & gate exec**：包裹 Agent，拦截它拉起的每个子进程，带意图提示 allow/deny。
+- [x] **m1 —— wrap & gate exec**：包裹 Agent，拦截已配置 shim 列表（npm、pip、curl、wget、……）上的子进程——自定义二进制和直接 shell spawn 不受门控；通用 exec 插桩在路线图上——带意图提示 allow/deny。
 - [x] **m2 —— scope fs & net**：`policy.yaml` 按主机门控 egress 并写入 JSONL 审计；`fs_write` 规则可由 `agentgate check` 解析（**check / dry-run 专用**，运行时强制见下方 v0.7.0+ 路线图）。
 - [x] **m3 —— DSL & 演示**：`allow`/`deny`/`ask` DSL + `--always` 持久化、`agentgate init` 默认策略、60 秒 asciinema 演示、双语 README。
 - [x] **m4 —— 写策略 & 审策略**：`agentgate check` 对任意动作做 dry-run；egress 按主机边界匹配，堵住伪造主机绕过；`.host` token 把规则限定在子域树内。

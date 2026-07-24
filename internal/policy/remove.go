@@ -2,7 +2,6 @@ package policy
 
 import (
 	"fmt"
-	"os"
 
 	"gopkg.in/yaml.v3"
 )
@@ -45,13 +44,15 @@ func (p *Policy) RemoveByMatch(action, targetGlob string) (Rule, int, error) {
 
 // Save writes the policy back to a file in the same YAML shape Append/Load use,
 // so a removal persists exactly like an `--always` grant did. The Default is
-// preserved. The file is written with 0o644, matching Append.
+// preserved. The file is written atomically (temp + fsync + rename) at 0o644,
+// matching Append — a crash mid-write never leaves a torn policy.yaml that
+// Load would reject.
 func (p *Policy) Save(path string) error {
 	out, err := yaml.Marshal(p)
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, out, 0o644)
+	return atomicWriteFile(path, out, 0o644)
 }
 
 // dispEmpty renders an empty match argument as "any" in error messages so a

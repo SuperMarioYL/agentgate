@@ -127,7 +127,12 @@ func (r *Rule) matches(req agentctx.GateRequest) bool {
 	if r.Match.TargetGlob == "" {
 		return true
 	}
-	return globMatch(r.Match.TargetGlob, req.Target)
+	// Expand env vars in the glob the same way scope.go expands a Scope, so the
+	// shipped `$PWD/**` allow rule actually resolves to the working directory
+	// instead of being matched literally (and matching nothing). Without this,
+	// the fs_write allow rule in policy.default.yaml / policy.yaml.example was a
+	// dead letter: a literal `$PWD/**` never has the real cwd as a prefix.
+	return globMatch(os.ExpandEnv(r.Match.TargetGlob), req.Target)
 }
 
 // globMatch matches a glob pattern against a target. It supports a trailing or
@@ -230,7 +235,7 @@ func Append(path string, rule Rule) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, out, 0o644)
+	return atomicWriteFile(path, out, 0o644)
 }
 
 // WithinScope reports whether path is confined to the rule's Scope prefix.
@@ -244,4 +249,50 @@ func (r *Rule) WithinScope(path string) bool {
 		return true
 	}
 	return confinedToScope(r.Scope, path)
+}
+
+// atomicWriteFile writes data to path atomically: it writes to a temp file in
+// the SAME directory as path, fsyncs it, applies perm, then renames it over the
+// target. A crash mid-write therefore never leaves a half-written policy.yaml
+// that Load would reject — readers see either the previous good state or the
+// fully new state, never a torn/truncated file. The temp file is created in the
+// same directory so os.Rename is a single-filesystem atomic rename (a cross-fs
+// rename would fall back to copy+remove, which is not atomic). This backs both
+// Append (the `--always` persist path the gate engine calls) and Save (the
+// `policy rm` write path), so every persisted policy mutation is crash-safe.
+//
+// perm is set on the destination regardless of any pre-existing file's mode:
+// os.WriteFile only applies perm on O_CREATE, so a 0o600 seed would otherwise
+// survive untouched. Atomic write normalises to the requested 0o644.
+func atomicWriteFile(path string, data []byte, perm os.FileMode) error {
+	dir := filepath.Dir(path)
+	f, err := os.CreateTemp(dir, ".agentgate-policy-*")
+	if err != nil {
+		return fmt.Errorf("create temp policy in %s: %w", dir, err)
+	}
+	tmp := f.Name()
+	// Best-effort cleanup if anything below fails; on success the temp file is
+	// renamed away before this runs, so the Remove is a no-op.
+	defer func() { _ = os.Remove(tmp) }()
+
+	if _, err := f.Write(data); err != nil {
+		_ = f.Close()
+		return fmt.Errorf("write temp policy: %w", err)
+	}
+	// fsync the file contents before the rename so the bytes are durable when
+	// the rename lands — the rename is the commit point.
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		return fmt.Errorf("sync temp policy: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("close temp policy: %w", err)
+	}
+	if err := os.Chmod(tmp, perm); err != nil {
+		return fmt.Errorf("chmod temp policy: %w", err)
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		return fmt.Errorf("rename temp policy over %s: %w", path, err)
+	}
+	return nil
 }
