@@ -5,6 +5,7 @@
 package audit
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -77,7 +78,18 @@ func (l *Logger) Close() error {
 	return nil
 }
 
-// Read parses every entry from a JSONL audit log.
+// Read parses every entry from a JSONL audit log. A single malformed or
+// truncated line (the common SIGKILLed-agent torn trailing entry, or a crash
+// mid-Record's single Write) is SKIPPED, not fatal: the valid entries before
+// and after it are still returned with a nil error, so `agentgate audit` stays
+// readable without hand-editing the file.
+//
+// This replaces an earlier json.NewDecoder + `for dec.More()` loop that called
+// Decode per entry and returned on the FIRST line that failed to decode — a
+// single torn tail discarded even the valid entries decoded before the bad line
+// (auditCmd treats any non-IsNotExist error as fatal, so the whole audit
+// feature was unreadable until the file was hand-edited). A torn tail no longer
+// aborts the read, so auditCmd needs no change.
 func Read(path string) ([]Entry, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -85,13 +97,24 @@ func Read(path string) ([]Entry, error) {
 	}
 	defer f.Close()
 	var entries []Entry
-	dec := json.NewDecoder(f)
-	for dec.More() {
+	s := bufio.NewScanner(f)
+	// A single audit line is well under the default 64KiB scan limit, but raise
+	// it anyway so a large intent string can never make a valid line unscannable.
+	s.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	for s.Scan() {
+		line := s.Bytes()
+		if len(line) == 0 {
+			continue
+		}
 		var e Entry
-		if err := dec.Decode(&e); err != nil {
-			return entries, fmt.Errorf("decode audit entry: %w", err)
+		if err := json.Unmarshal(line, &e); err != nil {
+			// Skip the malformed/truncated line and keep going — a torn tail
+			// must not make the whole audit feature unreadable.
+			continue
 		}
 		entries = append(entries, e)
 	}
+	// Return the valid entries with a nil error so auditCmd prints them even
+	// when the file had a torn tail; per the fix, a bad line no longer aborts.
 	return entries, nil
 }

@@ -41,6 +41,19 @@ type Prompter struct {
 	In      io.Reader
 	Out     io.Writer
 	NoColor bool
+	// Persist reports whether an [A]lways choice will actually be written back
+	// to a policy file. The engine sets it (via SetPersistPath) so the prompt can
+	// honestly say "remembered" only when persistence is configured, instead of
+	// claiming "remembered" and then persisting nothing (the built-in default
+	// policy case).
+	Persist bool
+
+	// reader is a single buffered reader reused across Ask calls so that
+	// unconsumed typed-ahead/piped bytes survive between prompts. A fresh
+	// bufio.NewReader per Ask stranded the 2nd piped answer in a discarded
+	// buffer (its first fill can pull more than one line) and the next Ask's
+	// fresh reader saw EOF -> ChoiceDeny ("no operator attached").
+	reader *bufio.Reader
 }
 
 // New builds a Prompter over the given streams.
@@ -69,7 +82,18 @@ func (p *Prompter) Ask(req agentctx.GateRequest) (Choice, error) {
 	fmt.Fprintf(w, "  %s / %s / %s ? ",
 		p.c(green, "[a]llow"), p.c(red, "[d]eny"), p.c(yellow, "[A]lways"))
 
-	r := bufio.NewReader(p.In)
+	// Reuse ONE buffered reader across calls. A fresh bufio.NewReader per Ask
+	// stranded the 2nd piped answer: its first fill can pull MORE than one line
+	// from a pipe or strings.Reader (up to the 4KiB buffer) in a single read, so
+	// the bytes for the next answer sat in a discarded buffer and the next Ask's
+	// fresh reader saw EOF -> ChoiceDeny ("no operator attached"). A non-interactive
+	// operator piping `printf 'a\na\n' | agentgate run` got the first action
+	// allowed and every later one silently denied. A lazily-created shared reader
+	// lets unconsumed buffered bytes survive between prompts.
+	if p.reader == nil {
+		p.reader = bufio.NewReader(p.In)
+	}
+	r := p.reader
 	line, err := r.ReadString('\n')
 	if err == io.EOF && line == "" {
 		fmt.Fprintln(w, p.c(red, "deny (no operator attached)"))
@@ -83,7 +107,15 @@ func (p *Prompter) Ask(req agentctx.GateRequest) (Choice, error) {
 		fmt.Fprintln(w, p.c(green, "allowed"))
 		return ChoiceAllow, nil
 	case "A", "always", "Always":
-		fmt.Fprintln(w, p.c(yellow, "allowed + remembered"))
+		if p.Persist {
+			fmt.Fprintln(w, p.c(yellow, "allowed + remembered"))
+		} else {
+			// No policy file / persist path configured (the built-in default):
+			// this [A]lways allows the action ONCE but persists nothing, so the
+			// next same-kind action re-prompts. Don't claim "remembered" when it
+			// was not — say so honestly and point the operator at `agentgate init`.
+			fmt.Fprintln(w, p.c(yellow, "allowed (not remembered — run `agentgate init`)"))
+		}
 		return ChoiceAlways, nil
 	default:
 		fmt.Fprintln(w, p.c(red, "denied"))

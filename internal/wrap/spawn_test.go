@@ -134,3 +134,60 @@ func TestInterceptedCommandsNonEmpty(t *testing.T) {
 		t.Fatal("npm must be intercepted")
 	}
 }
+
+// envLookup returns the value of key in an env slice produced by childEnv.
+func envLookup(env []string, key string) (string, bool) {
+	prefix := key + "="
+	for _, kv := range env {
+		if strings.HasPrefix(kv, prefix) {
+			return kv[len(prefix):], true
+		}
+	}
+	return "", false
+}
+
+// v0.9.0 regression (fix-no-net-strips-operator-proxy): `agentgate run --no-net`
+// (NetProxy="") must NOT strip the operator's HTTP(S)_PROXY env vars. childEnv
+// previously dropped them unconditionally and only re-added the agentgate
+// redirect proxy when NetProxy was set, so under --no-net the operator's
+// upstream corporate/forward proxy vanished and the wrapped agent's HTTP(S)
+// egress failed outright (or went direct) with no notice. The fix gates the
+// proxy-var drop on the net gate being active, so --no-net preserves the
+// operator's proxy vars untouched.
+func TestChildEnvNoNetPreservesOperatorProxy(t *testing.T) {
+	const corp = "http://corp-proxy.example:8080"
+	t.Setenv("HTTP_PROXY", corp)
+	t.Setenv("HTTPS_PROXY", corp)
+	t.Setenv("http_proxy", corp)
+	t.Setenv("https_proxy", corp)
+
+	r := NewRunner(nil, "claude-code", "agentgate") // NetProxy="" -> --no-net
+	env := r.childEnv(t.TempDir(), filepath.Join(t.TempDir(), "broker.sock"))
+
+	for _, k := range []string{"HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"} {
+		if val, ok := envLookup(env, k); !ok || val != corp {
+			t.Fatalf("--no-net must preserve the operator's %s, got %q (ok=%v)", k, val, ok)
+		}
+	}
+}
+
+// v0.9.0 fix counterpart: when the net gate IS active (NetProxy set), the
+// operator's upstream proxy vars must still be REPLACED by the agentgate
+// redirect proxy (the pre-fix behaviour, unchanged). This guards against an
+// over-correction that would leave the operator's proxy in place alongside the
+// redirect proxy.
+func TestChildEnvNetGateReplacesOperatorProxy(t *testing.T) {
+	t.Setenv("HTTP_PROXY", "http://corp-proxy.example:8080")
+	t.Setenv("HTTPS_PROXY", "http://corp-proxy.example:8080")
+
+	r := NewRunner(nil, "claude-code", "agentgate")
+	r.NetProxy = "127.0.0.1:9999" // net gate on
+	env := r.childEnv(t.TempDir(), filepath.Join(t.TempDir(), "broker.sock"))
+
+	want := "http://127.0.0.1:9999"
+	for _, k := range []string{"HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"} {
+		if val, ok := envLookup(env, k); !ok || val != want {
+			t.Fatalf("net gate on: %s must be the agentgate redirect proxy %q, got %q (ok=%v)", k, want, val, ok)
+		}
+	}
+}

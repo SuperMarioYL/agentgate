@@ -4,6 +4,7 @@
 package gate
 
 import (
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -31,8 +32,18 @@ func NewEngine(p *policy.Policy, pr *prompt.Prompter, lg *audit.Logger) *Engine 
 	return &Engine{policy: p, prompter: pr, logger: lg}
 }
 
-// SetPersistPath enables `--always` persistence to the given policy file.
-func (e *Engine) SetPersistPath(path string) { e.persist = path }
+// SetPersistPath enables `--always` persistence to the given policy file. It
+// also tells the prompter (if any) whether an [A]lways choice will actually be
+// persisted, so the prompt can honestly say "remembered" only when a policy file
+// will be written — an empty path (no policy file / built-in default) means the
+// choice allows once but persists nothing, and the prompt must not lie that it
+// was remembered.
+func (e *Engine) SetPersistPath(path string) {
+	e.persist = path
+	if e.prompter != nil {
+		e.prompter.Persist = path != ""
+	}
+}
 
 // Decide resolves a request to a final allow/deny, prompting on "ask",
 // persisting on "always", and recording the outcome to the audit log.
@@ -120,8 +131,14 @@ func (e *Engine) appendAlwaysRule(req agentctx.GateRequest) {
 // the glob on the binary + its first non-flag subcommand and append "*" (e.g.
 // "npm install*"), so an --always on `npm install left-pad` afterwards covers
 // `npm install chalk` too; with no subcommand we fall back to "<bin> *". fs_write
-// keeps its directory/** scope glob and net_egress keeps the host token verbatim
-// (a bare host already matches host:port via hostTokenMatch).
+// keeps its directory/** scope glob. net_egress STRIPS the port from the
+// host:port target and persists the bare host: the runtime net_egress Target is
+// the host:port the redirect proxy passes to CheckHost, so persisting it verbatim
+// (e.g. "registry.npmjs.org:443") would re-match only that exact host:port
+// (hostTokenMatch rejects :80) and the next egress to the same host on :80 would
+// re-prompt — the same verbatim-target class the v0.4.0 exec fix closed. A
+// bare-host rule auto-allows the host on any port via hostTokenMatch (which also
+// rejects suffix/prefix attacks).
 func alwaysGlob(req agentctx.GateRequest) string {
 	switch req.Action {
 	case agentctx.ActionFSWrite:
@@ -137,6 +154,16 @@ func alwaysGlob(req agentctx.GateRequest) string {
 			return bin + " " + sub + "*"
 		}
 		return bin + " *"
+	case agentctx.ActionNetEgress:
+		// Strip the port so the persisted rule is the bare host; hostTokenMatch
+		// then matches any port on that host (and rejects suffix/prefix attacks).
+		// Fall back to the bare token if SplitHostPort reports it is not
+		// host:port (e.g. an operator already typed a bare host).
+		host, _, err := net.SplitHostPort(req.Target)
+		if err != nil {
+			return req.Target
+		}
+		return host
 	default:
 		return req.Target
 	}

@@ -247,3 +247,66 @@ func TestAlwaysExecPersistsReusableGlob(t *testing.T) {
 		t.Fatal("--always on `npm install` must not allow `pip install requests`")
 	}
 }
+
+// v0.9.0 regression (fix-always-netegress-hostport-verbatim): [A]lways on a
+// net_egress action must persist the BARE host, not the verbatim host:port. The
+// runtime net_egress Target is the host:port the redirect proxy passes to
+// CheckHost, so [A]lways on registry.npmjs.org:443 previously persisted
+// target_glob="registry.npmjs.org:443"; hostTokenMatch then only re-matched that
+// exact host:port (it rejects :80), so the next egress to the same host on port
+// :80 re-prompted — defeating the operator's "stop asking me" intent. The fix
+// strips the port so a bare-host rule auto-allows the host on any port.
+func TestAlwaysNetEgressPersistsBareHost(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "policy.yaml")
+	if err := writeFile(path, "default: ask\nrules: []\n"); err != nil {
+		t.Fatal(err)
+	}
+	pol, _ := policy.Load(path)
+	pr := prompt.New(strings.NewReader("A\n"), new(bytes.Buffer))
+	pr.NoColor = true
+	eng := NewEngine(pol, pr, audit.NewWriter(new(bytes.Buffer)))
+	eng.SetPersistPath(path)
+
+	ng := NewNetGate(eng, "claude-code")
+	if ok, _ := ng.CheckHost("registry.npmjs.org:443", "first time"); !ok {
+		t.Fatal("[A]lways on :443 should allow")
+	}
+	// A reloaded policy must have persisted the BARE host glob, and that rule
+	// must auto-ALLOW the same host on a DIFFERENT port (:80) without
+	// re-prompting — hostTokenMatch handles any port on a bare-host rule.
+	reloaded, _ := policy.Load(path)
+	if len(reloaded.Rules) == 0 || reloaded.Rules[0].Match.TargetGlob != "registry.npmjs.org" {
+		t.Fatalf("persisted glob should be bare host \"registry.npmjs.org\", got %+v", reloaded.Rules)
+	}
+	if res := reloaded.Resolve(buildNetReq("registry.npmjs.org:80")); res.Decision != policy.Allow {
+		t.Fatalf("bare-host always rule should auto-allow :80, got %s", res.Decision)
+	}
+	// And it must NOT over-broaden to a different host (suffix/prefix attack),
+	// which hostTokenMatch already rejects.
+	if res := reloaded.Resolve(buildNetReq("registry.npmjs.org.evil.com:80")); res.Decision == policy.Allow {
+		t.Fatal("bare-host rule must not allow a suffix-attack host")
+	}
+}
+
+// v0.9.0 fix (fix-always-without-policy-file-lies-remembered wiring):
+// SetPersistPath must propagate the persist state to the prompter, so the
+// [A]lways prompt can honestly say "remembered" only when a policy file will
+// actually be written (and "not remembered" otherwise). A non-empty path enables
+// persistence; an empty path (no policy file / built-in default) disables it.
+func TestSetPersistPathPropagatesToPrompter(t *testing.T) {
+	pr := prompt.New(strings.NewReader(""), new(bytes.Buffer))
+	pol, _ := policy.Parse([]byte("default: ask\nrules: []\n"))
+	eng := NewEngine(pol, pr, nil)
+	if pr.Persist {
+		t.Fatal("a new prompter must default to Persist=false")
+	}
+	eng.SetPersistPath(filepath.Join(t.TempDir(), "policy.yaml"))
+	if !pr.Persist {
+		t.Fatal("SetPersistPath(non-empty) must set prompter.Persist=true so [A]lways can honestly say remembered")
+	}
+	eng.SetPersistPath("")
+	if pr.Persist {
+		t.Fatal("SetPersistPath(\"\") must set prompter.Persist=false so [A]lways honestly says not remembered")
+	}
+}

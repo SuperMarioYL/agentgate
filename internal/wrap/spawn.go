@@ -122,16 +122,31 @@ func (r *Runner) Run(argv []string) (int, error) {
 // childEnv constructs the environment for the wrapped agent: PATH gets the shim
 // dir prepended, the broker socket + agent identity are exported, and the net
 // proxy (if any) is wired through HTTP(S)_PROXY.
+//
+// The operator's upstream HTTP(S)_PROXY vars are only dropped when the net gate
+// is ACTIVE (r.NetProxy != ""): when the net gate is on, the operator's proxy
+// must be replaced by the agentgate redirect proxy (re-added below); when the
+// net gate is off (--no-net) the operator's proxy vars are kept untouched so
+// upstream corporate/forward proxy connectivity is preserved — previously they
+// were dropped unconditionally and only re-added when NetProxy was set, so
+// --no-net silently stripped the operator's proxy and the agent's HTTP(S)
+// egress failed outright (or went direct) with no notice.
 func (r *Runner) childEnv(shimDir, sockPath string) []string {
 	env := os.Environ()
 	out := env[:0]
+	netGateOn := r.NetProxy != ""
 	for _, kv := range env {
 		switch {
 		case strings.HasPrefix(kv, "PATH="):
 			out = append(out, "PATH="+shimDir+string(os.PathListSeparator)+kv[len("PATH="):])
-		case strings.HasPrefix(kv, "HTTP_PROXY="), strings.HasPrefix(kv, "HTTPS_PROXY="),
-			strings.HasPrefix(kv, "http_proxy="), strings.HasPrefix(kv, "https_proxy="):
-			// drop; we re-add below if a proxy is configured
+		case netGateOn && (strings.HasPrefix(kv, "HTTP_PROXY=") ||
+			strings.HasPrefix(kv, "HTTPS_PROXY=") ||
+			strings.HasPrefix(kv, "http_proxy=") ||
+			strings.HasPrefix(kv, "https_proxy=")):
+			// Net gate on: drop the operator's upstream proxy; we re-add the
+			// agentgate redirect proxy below. When the net gate is OFF these are
+			// left untouched (fall through to default) so upstream connectivity
+			// is preserved.
 		default:
 			out = append(out, kv)
 		}
@@ -141,7 +156,7 @@ func (r *Runner) childEnv(shimDir, sockPath string) []string {
 		"AGENTGATE_AGENT="+r.Agent,
 		"AGENTGATE_ACTIVE=1",
 	)
-	if r.NetProxy != "" {
+	if netGateOn {
 		px := "http://" + r.NetProxy
 		out = append(out, "HTTP_PROXY="+px, "HTTPS_PROXY="+px,
 			"http_proxy="+px, "https_proxy="+px)
