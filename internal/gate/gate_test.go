@@ -2,6 +2,7 @@ package gate
 
 import (
 	"bytes"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -308,5 +309,127 @@ func TestSetPersistPathPropagatesToPrompter(t *testing.T) {
 	eng.SetPersistPath("")
 	if pr.Persist {
 		t.Fatal("SetPersistPath(\"\") must set prompter.Persist=false so [A]lways honestly says not remembered")
+	}
+}
+
+// captureStderr swaps os.Stderr for a pipe for the duration of fn, runs fn,
+// then drains whatever the code under test wrote to stderr. The restore and the
+// close happen in t.Cleanup so os.Stderr is put back even if fn calls
+// t.Fatalf (which runtime.Goexits past the normal return path). The gate
+// engine is single-goroutine and writes at most one short notice, so there is
+// no cross-goroutine access to os.Stderr here.
+func captureStderr(t *testing.T, fn func()) string {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	old := os.Stderr
+	os.Stderr = w
+	t.Cleanup(func() {
+		os.Stderr = old
+		_ = w.Close()
+		_ = r.Close()
+	})
+	done := make(chan string, 1)
+	go func() {
+		var b bytes.Buffer
+		_, _ = io.Copy(&b, r)
+		done <- b.String()
+	}()
+	fn()
+	_ = w.Close() // signal EOF so the reader drains and returns
+	return <-done
+}
+
+// v0.10.0 regression (fix-always-persist-swallow-misleads-operator): when the
+// operator presses [A]lways but policy.Append fails (disk full, permission,
+// file deleted between Load and the atomic write), the gate must NOT silently
+// swallow the error after the prompt already said "remembered". The action
+// stays allowed (the operator did press [A]lways), but the failure is surfaced
+// on stderr and the audit row is attributed to the operator's live choice
+// (Source="operator"), NOT to a remembered "always" rule that was never written.
+// RED before the fix: appendAlwaysRule did `if err := Append(...); err != nil {
+// return }` (swallowed) and resolveAsk returned Source="always" regardless.
+func TestAlwaysPersistFailureSurfacedAndAttributedToOperator(t *testing.T) {
+	pol, err := policy.Parse([]byte("default: ask\nrules: []\n"))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	var log bytes.Buffer
+	pr := prompt.New(strings.NewReader("A\n"), new(bytes.Buffer))
+	pr.NoColor = true
+	eng := NewEngine(pol, pr, audit.NewWriter(&log))
+	// Persist path inside a directory that does not exist: Append's Load
+	// (os.ReadFile) fails, so the persist genuinely fails.
+	eng.SetPersistPath(filepath.Join(t.TempDir(), "missing-subdir", "policy.yaml"))
+
+	stderr := captureStderr(t, func() {
+		dec, _ := eng.Decide(buildNetReq("api.example.com:443"))
+		if dec != policy.Allow {
+			t.Fatalf("operator pressed [A]lways; action must still be allowed even though persist failed, got %s", dec)
+		}
+	})
+	if !strings.Contains(stderr, "persistence failed") || !strings.Contains(stderr, "rule NOT remembered") {
+		t.Fatalf("a failed persist must be surfaced on stderr (the prompt already said \"remembered\"); got:\n%s", stderr)
+	}
+	// The audit row must reflect that no rule was actually persisted: Source
+	// "operator" (the live choice), NOT "always" (a remembered rule).
+	auditOut := log.String()
+	if !strings.Contains(auditOut, `"source":"operator"`) {
+		t.Fatalf("audit must record source=operator when persist failed, got:\n%s", auditOut)
+	}
+	if strings.Contains(auditOut, `"source":"always"`) {
+		t.Fatalf("audit must NOT record source=always when persist failed, got:\n%s", auditOut)
+	}
+}
+
+// v0.10.0 regression (fix-always-rule-prepend-shadows-explicit-deny), gate path:
+// pressing [A]lways on an action matched by an ask rule must insert the allow
+// rule immediately BEFORE that ask rule (plumbing the matched ask Rule's index
+// from Decide through appendAlwaysRule into Append), not at the FRONT of the
+// whole list. A front-prepend shadows every preceding explicit deny. Here
+// `deny *npm install evil*` sits above `ask *npm install*`; after [A]lways on
+// `npm install legit` the always-allow `npm install*` must NOT bypass the
+// explicit deny, so `npm install evil-pkg` is still DENIED. RED before the fix.
+func TestAlwaysDoesNotShadowExplicitDeny(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "policy.yaml")
+	src := "default: deny\nrules:\n" +
+		"  - match: {action: exec, target_glob: \"*npm install evil*\"}\n" +
+		"    decision: deny\n" +
+		"  - match: {action: exec, target_glob: \"*npm install*\"}\n" +
+		"    decision: ask\n"
+	if err := writeFile(path, src); err != nil {
+		t.Fatal(err)
+	}
+	pol, _ := policy.Load(path)
+	pr := prompt.New(strings.NewReader("A\n"), new(bytes.Buffer))
+	pr.NoColor = true
+	eng := NewEngine(pol, pr, audit.NewWriter(new(bytes.Buffer)))
+	eng.SetPersistPath(path)
+
+	legit := agentctx.GateRequest{
+		Action: agentctx.ActionExec,
+		Target: "npm install legit",
+		Args:   []string{"npm", "install", "legit"},
+		Agent:  "claude-code",
+	}
+	if dec, _ := eng.Decide(legit); dec != policy.Allow {
+		t.Fatalf("[A]lways on a legit install should allow, got %s", dec)
+	}
+
+	reloaded, _ := policy.Load(path)
+	// The explicit deny ABOVE the ask rule must keep precedence: the always-allow
+	// rule was inserted before the ask rule (not at the front), so an "evil"
+	// install matching both the deny and the allow globs is still DENIED.
+	evil := agentctx.GateRequest{Action: agentctx.ActionExec, Target: "npm install evil-pkg"}
+	if got := reloaded.Resolve(evil).Decision; got != policy.Deny {
+		t.Fatalf("explicit deny must NOT be shadowed by the --always allow; got %s", got)
+	}
+	// And the legit install the operator allowed is now auto-allowed (the ask
+	// rule is shadowed, so --always genuinely stops re-prompting).
+	if got := reloaded.Resolve(legit).Decision; got != policy.Allow {
+		t.Fatalf("[A]lways should auto-allow the legit install on reload, got %s", got)
 	}
 }

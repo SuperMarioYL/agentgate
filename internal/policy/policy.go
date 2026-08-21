@@ -54,10 +54,16 @@ type Policy struct {
 	path string
 }
 
-// Resolution is the outcome of evaluating a request, including which rule fired.
+// Resolution is the outcome of evaluating a request, including which rule fired
+// and where it sits in the rule list. RuleIndex is the matched rule's position
+// in p.Rules (0-based); it is -1 when the decision came from the default (no
+// rule matched). The gate's --always path uses RuleIndex to insert a persisted
+// allow rule immediately before the ask rule that prompted, instead of at the
+// front of the whole list.
 type Resolution struct {
 	Decision    Decision
 	Rule        *Rule
+	RuleIndex   int
 	FromDefault bool
 }
 
@@ -114,10 +120,10 @@ func (p *Policy) Resolve(req agentctx.GateRequest) Resolution {
 	for i := range p.Rules {
 		r := &p.Rules[i]
 		if r.matches(req) {
-			return Resolution{Decision: r.Decision, Rule: r}
+			return Resolution{Decision: r.Decision, Rule: r, RuleIndex: i}
 		}
 	}
-	return Resolution{Decision: p.Default, FromDefault: true}
+	return Resolution{Decision: p.Default, RuleIndex: -1, FromDefault: true}
 }
 
 func (r *Rule) matches(req agentctx.GateRequest) bool {
@@ -220,17 +226,31 @@ func starMatch(pattern, target string) bool {
 	return true
 }
 
-// Append persists an additional rule to a policy file. The rule is inserted
-// before the final catch-all so it takes precedence (first-match-wins). This
-// backs the `--always` operator choice.
-func Append(path string, rule Rule) error {
+// Append persists an additional rule to a policy file, inserting it immediately
+// BEFORE the matched ask rule at beforeIdx. Under first-match-wins this shadows
+// the prompting ask rule (so --always stops re-prompting) while every explicit
+// deny rule ABOVE beforeIdx keeps its precedence. When beforeIdx is negative (the
+// ask came from the default, so no rule matched) or out of range, the rule is
+// appended at the END — after every existing rule — so it never shadows an
+// explicit deny and only beats the default. This backs the `--always` choice.
+func Append(path string, rule Rule, beforeIdx int) error {
 	p, err := Load(path)
 	if err != nil {
 		return err
 	}
-	// Insert ahead of any trailing action-less default-ish rule so the new
-	// allow rule actually fires.
-	p.Rules = append([]Rule{rule}, p.Rules...)
+	insertAt := beforeIdx
+	if insertAt < 0 || insertAt > len(p.Rules) {
+		// No matched rule (ask came from the default): append at the end so the
+		// new allow rule never shadows a preceding explicit deny.
+		insertAt = len(p.Rules)
+	}
+	// Canonical slice insert at insertAt: grow by one, shift the tail right,
+	// then place the new rule. first-match-wins then fires the new allow rule
+	// before the ask rule (stopping re-prompting) while rules above insertAt
+	// keep their order and precedence.
+	p.Rules = append(p.Rules, Rule{})
+	copy(p.Rules[insertAt+1:], p.Rules[insertAt:])
+	p.Rules[insertAt] = rule
 	out, err := yaml.Marshal(p)
 	if err != nil {
 		return err

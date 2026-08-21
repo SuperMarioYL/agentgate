@@ -94,7 +94,7 @@ func TestV080AppendAtomicEnforces0644AndLeavesNoPartial(t *testing.T) {
 		t.Fatal(err)
 	}
 	rule := Rule{Match: Match{Action: agentctx.ActionExec, TargetGlob: "npm install chalk"}, Decision: Allow}
-	if err := Append(path, rule); err != nil {
+	if err := Append(path, rule, -1); err != nil {
 		t.Fatalf("Append: %v", err)
 	}
 	entries, err := os.ReadDir(dir)

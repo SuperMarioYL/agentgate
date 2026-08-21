@@ -230,7 +230,7 @@ func TestAppendPersistsRule(t *testing.T) {
 		t.Fatal(err)
 	}
 	rule := Rule{Match: Match{Action: agentctx.ActionExec, TargetGlob: "npm install chalk"}, Decision: Allow}
-	if err := Append(path, rule); err != nil {
+	if err := Append(path, rule, -1); err != nil {
 		t.Fatalf("append: %v", err)
 	}
 	reloaded, err := Load(path)
@@ -296,5 +296,92 @@ func TestExamplePolicyHasNoBlanketFSWriteDeny(t *testing.T) {
 		if r.Match.Action == agentctx.ActionFSWrite && r.Match.TargetGlob == "" && r.Decision == Deny {
 			t.Fatal("shipped example must NOT ship a blanket `deny fs_write` catch-all (fs_write is check/dry-run-only in this version)")
 		}
+	}
+}
+
+// v0.10.0 regression (fix-always-rule-prepend-shadows-explicit-deny): Append
+// must insert the new allow rule immediately BEFORE the matched ask rule at
+// beforeIdx, not front-prepend to the whole list. A front-prepend shadows every
+// preceding explicit deny on a custom policy that denies a sub-pattern of the
+// ask rule. Here `deny *npm install evil*` sits above `ask *npm install*`;
+// inserting the allow rule before the ask rule (beforeIdx=1) keeps the deny's
+// precedence, so an install matching BOTH globs is still DENIED. RED before the
+// fix (front-prepend put the allow above the deny).
+func TestAppendInsertsBeforeMatchedAskRuleNotFrontPrepend(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "policy.yaml")
+	src := "default: deny\nrules:\n" +
+		"  - match: {action: exec, target_glob: \"*npm install evil*\"}\n" +
+		"    decision: deny\n" +
+		"  - match: {action: exec, target_glob: \"*npm install*\"}\n" +
+		"    decision: ask\n"
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// The operator pressed [A]lways on `npm install legit`, which the ask rule
+	// at index 1 matched; the always-allow glob is `npm install*`.
+	allow := Rule{Match: Match{Action: agentctx.ActionExec, TargetGlob: "npm install*"}, Decision: Allow}
+	if err := Append(path, allow, 1); err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+	reloaded, err := Load(path)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	// The deny rule stays first (above the inserted allow), so an install
+	// matching BOTH the deny and the allow globs is still DENIED — front-prepend
+	// would have put the allow at index 0 and bypassed the deny.
+	evil := agentctx.GateRequest{Action: agentctx.ActionExec, Target: "npm install evil-pkg"}
+	if got := reloaded.Resolve(evil).Decision; got != Deny {
+		t.Fatalf("explicit deny must keep precedence over the inserted --always allow; got %s", got)
+	}
+	// The legit install the operator allowed is auto-allowed (ask rule shadowed).
+	legit := agentctx.GateRequest{Action: agentctx.ActionExec, Target: "npm install legit"}
+	if got := reloaded.Resolve(legit).Decision; got != Allow {
+		t.Fatalf("inserted --always allow should fire for the legit install, got %s", got)
+	}
+	// Order must be deny, allow, ask (insert before the ask rule), not allow, deny, ask.
+	if len(reloaded.Rules) != 3 ||
+		reloaded.Rules[0].Decision != Deny ||
+		reloaded.Rules[1].Decision != Allow ||
+		reloaded.Rules[2].Decision != Ask {
+		t.Fatalf("rule order should be deny, allow, ask; got %+v", reloaded.Rules)
+	}
+}
+
+// v0.10.0 regression (fix-always-rule-prepend-shadows-explicit-deny, default
+// branch): when the ask came from the default (no matched rule, beforeIdx<0),
+// Append must append the new rule at the END — after every existing rule — so
+// it never shadows an explicit deny. A front-prepend would put the allow above
+// the deny and bypass it. RED before the fix.
+func TestAppendDefaultAskAppendsAtEndNotFrontPrepend(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "policy.yaml")
+	// default: ask; one explicit deny. An `npm install legit` request matches
+	// no rule -> default ask -> [A]lways with allow glob `npm install*`.
+	src := "default: ask\nrules:\n" +
+		"  - match: {action: exec, target_glob: \"*npm install evil*\"}\n" +
+		"    decision: deny\n"
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	allow := Rule{Match: Match{Action: agentctx.ActionExec, TargetGlob: "npm install*"}, Decision: Allow}
+	if err := Append(path, allow, -1); err != nil { // -1 == ask came from the default
+		t.Fatalf("Append: %v", err)
+	}
+	reloaded, err := Load(path)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	// The explicit deny stays first; an install matching both globs is still
+	// DENIED (front-prepend would have allowed it).
+	evil := agentctx.GateRequest{Action: agentctx.ActionExec, Target: "npm install evil-pkg"}
+	if got := reloaded.Resolve(evil).Decision; got != Deny {
+		t.Fatalf("explicit deny must keep precedence when --always appended at the end; got %s", got)
+	}
+	if len(reloaded.Rules) != 2 ||
+		reloaded.Rules[0].Decision != Deny ||
+		reloaded.Rules[1].Decision != Allow {
+		t.Fatalf("rule order should be deny, allow (append at end); got %+v", reloaded.Rules)
 	}
 }

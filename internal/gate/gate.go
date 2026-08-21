@@ -4,6 +4,7 @@
 package gate
 
 import (
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -70,7 +71,7 @@ func (e *Engine) Decide(req agentctx.GateRequest) (policy.Decision, error) {
 
 	switch final {
 	case policy.Ask:
-		final, source = e.resolveAsk(req)
+		final, source = e.resolveAsk(req, res.RuleIndex)
 	case policy.Deny:
 		if e.prompter != nil {
 			e.prompter.DenialNotice(req)
@@ -90,7 +91,7 @@ func (e *Engine) Decide(req agentctx.GateRequest) (policy.Decision, error) {
 	return final, nil
 }
 
-func (e *Engine) resolveAsk(req agentctx.GateRequest) (policy.Decision, string) {
+func (e *Engine) resolveAsk(req agentctx.GateRequest, askRuleIdx int) (policy.Decision, string) {
 	if e.prompter == nil {
 		return policy.Deny, "default" // headless: fail closed
 	}
@@ -99,26 +100,38 @@ func (e *Engine) resolveAsk(req agentctx.GateRequest) (policy.Decision, string) 
 		return policy.Deny, "operator"
 	}
 	if choice == prompt.ChoiceAlways && e.persist != "" {
-		e.appendAlwaysRule(req)
+		if persistErr := e.appendAlwaysRule(req, askRuleIdx); persistErr != nil {
+			// The operator pressed [A]lways, so the action stays allowed — but
+			// the persist failed, so the rule was NOT remembered even though the
+			// prompt already said "remembered". Surface the failure on stderr
+			// and attribute the audit row to the operator's live choice, not to
+			// a remembered "always" rule that was never written. The allow
+			// decision itself is unchanged.
+			fmt.Fprintf(os.Stderr, "agentgate: persistence failed: %v; rule NOT remembered\n", persistErr)
+			return policy.Allow, "operator"
+		}
 		return policy.Allow, "always"
 	}
 	return prompt.ChoiceToDecision(choice), "operator"
 }
 
 // appendAlwaysRule writes an allow rule for the request's action+target to the
-// persisted policy file and reloads the in-memory policy.
-func (e *Engine) appendAlwaysRule(req agentctx.GateRequest) {
+// persisted policy file (inserted before the matched ask rule at askRuleIdx so
+// explicit deny rules above keep precedence) and reloads the in-memory policy.
+// It returns the Append error so resolveAsk can surface a persist failure.
+func (e *Engine) appendAlwaysRule(req agentctx.GateRequest, askRuleIdx int) error {
 	glob := alwaysGlob(req)
 	rule := policy.Rule{
 		Match:    policy.Match{Action: req.Action, TargetGlob: glob},
 		Decision: policy.Allow,
 	}
-	if err := policy.Append(e.persist, rule); err != nil {
-		return
+	if err := policy.Append(e.persist, rule, askRuleIdx); err != nil {
+		return err
 	}
 	if reloaded, err := policy.Load(e.persist); err == nil {
 		e.policy = reloaded
 	}
+	return nil
 }
 
 // alwaysGlob derives the persisted-rule TargetGlob for an `--always` choice.
