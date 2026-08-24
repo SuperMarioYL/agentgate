@@ -131,6 +131,14 @@ func (r *Runner) Run(argv []string) (int, error) {
 // were dropped unconditionally and only re-added when NetProxy was set, so
 // --no-net silently stripped the operator's proxy and the agent's HTTP(S)
 // egress failed outright (or went direct) with no notice.
+//
+// When the net gate is on, NO_PROXY/no_proxy are also dropped (and NOT re-added)
+// so the agent's http.ProxyFromEnvironment exempts no host and every egress is
+// mediated by the agentgate redirect proxy. Inheriting the operator's bypass
+// list verbatim would let a pre-approved host (e.g.
+// "127.0.0.1,localhost,.internal.corp") connect DIRECTLY past the redirect
+// proxy, silently defeating the net gate's egress-control guarantee for exactly
+// the hosts an operator pre-approved for direct connection.
 func (r *Runner) childEnv(shimDir, sockPath string) []string {
 	env := os.Environ()
 	out := env[:0]
@@ -142,11 +150,16 @@ func (r *Runner) childEnv(shimDir, sockPath string) []string {
 		case netGateOn && (strings.HasPrefix(kv, "HTTP_PROXY=") ||
 			strings.HasPrefix(kv, "HTTPS_PROXY=") ||
 			strings.HasPrefix(kv, "http_proxy=") ||
-			strings.HasPrefix(kv, "https_proxy=")):
-			// Net gate on: drop the operator's upstream proxy; we re-add the
-			// agentgate redirect proxy below. When the net gate is OFF these are
-			// left untouched (fall through to default) so upstream connectivity
-			// is preserved.
+			strings.HasPrefix(kv, "https_proxy=") ||
+			strings.HasPrefix(kv, "NO_PROXY=") ||
+			strings.HasPrefix(kv, "no_proxy=")):
+			// Net gate on: drop the operator's upstream proxy and any NO_PROXY
+			// bypass list. The agentgate redirect proxy is re-added below; but
+			// NO_PROXY/no_proxy are NOT re-added (left absent) so no host is
+			// exempted and every egress is mediated by the gate. When the net
+			// gate is OFF these vars are left untouched (fall through to default)
+			// so upstream connectivity and the operator's bypass list are
+			// preserved.
 		default:
 			out = append(out, kv)
 		}

@@ -191,3 +191,35 @@ func TestChildEnvNetGateReplacesOperatorProxy(t *testing.T) {
 		}
 	}
 }
+
+// v0.11.0 regression (fix-net-gate-no-proxy-bypass): when the net gate is ON
+// (NetProxy set), an inherited NO_PROXY/no_proxy entry must NOT survive into
+// the child env. The wrapped agent's HTTP client uses
+// http.ProxyFromEnvironment, which honours NO_PROXY, so any host on the
+// operator's bypass list (e.g. "127.0.0.1,localhost,.internal.corp") would
+// otherwise connect DIRECTLY past the agentgate redirect proxy — silently
+// defeating the net gate's egress-control guarantee for exactly the hosts an
+// operator pre-approved for direct connection. The fix drops NO_PROXY/no_proxy
+// (leaves them absent) when the net gate is active so no host is exempted and
+// every egress is mediated.
+func TestChildEnvNetGateDropsNoProxyBypass(t *testing.T) {
+	const bypass = "127.0.0.1,localhost,.internal.corp"
+	t.Setenv("NO_PROXY", bypass)
+	t.Setenv("no_proxy", bypass)
+
+	r := NewRunner(nil, "claude-code", "agentgate")
+	r.NetProxy = "127.0.0.1:9999" // net gate on
+	env := r.childEnv(t.TempDir(), filepath.Join(t.TempDir(), "broker.sock"))
+
+	// Sanity: the redirect proxy is still wired, so dropping NO_PROXY routes
+	// egress THROUGH the gate rather than leaving it un-proxied.
+	if val, ok := envLookup(env, "HTTP_PROXY"); !ok || val != "http://127.0.0.1:9999" {
+		t.Fatalf("net gate on: HTTP_PROXY must still be the agentgate redirect proxy, got %q (ok=%v)", val, ok)
+	}
+
+	for _, k := range []string{"NO_PROXY", "no_proxy"} {
+		if _, ok := envLookup(env, k); ok {
+			t.Fatalf("net gate on: inherited %s must be dropped so it cannot bypass the redirect proxy, but it is present in child env", k)
+		}
+	}
+}

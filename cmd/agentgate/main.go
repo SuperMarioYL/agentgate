@@ -29,7 +29,7 @@ import (
 )
 
 // version is overridden at release time via -ldflags.
-var version = "0.8.0"
+var version = "0.11.0"
 
 //go:embed policy.default.yaml
 var defaultPolicy []byte

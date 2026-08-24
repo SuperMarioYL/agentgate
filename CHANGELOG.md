@@ -4,6 +4,28 @@ All notable changes to AgentGate are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.0] - 2026-08-25
+
+A net-gate integrity release: one fix, no new surface, no new deps. The theme
+is that the net gate's contract — every egress host is resolved against the
+policy via the agentgate redirect proxy — must hold even when the operator's
+environment pre-approves bypass hosts.
+
+### Fixed
+
+- **The net gate no longer honours an inherited `NO_PROXY` bypass list.**
+  `childEnv` (`internal/wrap/spawn.go`) replaced the operator's
+  `HTTP_PROXY`/`HTTPS_PROXY` with the agentgate redirect proxy when the net gate
+  was on, but `NO_PROXY`/`no_proxy` were inherited verbatim. The wrapped agent's
+  HTTP client uses `http.ProxyFromEnvironment`, which honours `NO_PROXY`, so any
+  host the operator pre-approved for direct connection (e.g.
+  `127.0.0.1,localhost,.internal.corp`) connected DIRECTLY past the redirect
+  proxy and its host check — silently defeating the gate for exactly the hosts an
+  operator pre-approved. When the net gate is active, `NO_PROXY`/`no_proxy` are now
+  dropped (and not re-added) so no host is exempted and every egress is mediated
+  by the gate; the `--no-net` (gate off) path is unchanged and still preserves the
+  operator's bypass list.
+
 ## [0.8.0] - 2026-07-25
 
 A truth-and-durability release: three fixes, no new surface, no new deps. The
