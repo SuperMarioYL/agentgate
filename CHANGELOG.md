@@ -4,6 +4,32 @@ All notable changes to AgentGate are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.0] - 2026-09-02
+
+A provenance-consistency release: one fix, no new surface, no new deps. The
+v0.11.0 site refresh never landed — `web/site.json` `content_version` was still
+`"v0.10.0"` on both the v0.11.0 tag and `origin/main` while the binary reported
+`0.11.0`, so the live product site claimed stale `v0.10.0` content provenance.
+
+### Fixed
+
+- **Bumped the drifted `web/site.json` content_version to match the shipped
+  binary.** All four provenance surfaces are now at `0.12.0`: the `VERSION`
+  file, the `main.version` var, `web/site.json` `content_version` (normalised
+  from the `"v0.10.0"` form to the binary's no-`"v"` format), and the
+  CHANGELOG. A new Go lockstep test (`TestVersionProvenanceLockstep`,
+  `cmd/agentgate/version_lockstep_test.go`) asserts the site
+  `content_version` (with any leading `"v"` stripped) equals the `main.version`
+  package var, so the drift cannot silently recur on a future release.
+
+### Notes
+
+- The v0.11.0 bug-hunt verified the net gate is correct on both CONNECT and
+  non-CONNECT paths (a probe confirmed Go's `http.Server` normalises `r.Host`
+  to the request-URI host, so the policy check and the dial target always agree
+  — no host-spoofing bypass) and `go vet`/`gofmt`/`go test ./...` are clean, so
+  no logic-bug fix is shipped this round (evidence before speculation).
+
 ## [0.11.0] - 2026-08-25
 
 A net-gate integrity release: one fix, no new surface, no new deps. The theme
