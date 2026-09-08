@@ -211,5 +211,6 @@
         "code": "go run ./cmd/agentgate init\ngo run ./cmd/agentgate policy --policy examples/policies/supply-chain.yaml\ngo run ./cmd/agentgate policy --policy examples/policies/supply-chain.yaml --explain --action exec \"npm install chalk\"\ngo run ./cmd/agentgate audit --decision deny --json"
       }
     ]
-  }
+  },
+  "content_version": "0.12.0"
 }
