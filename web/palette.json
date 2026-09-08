@@ -1,0 +1,38 @@
+{
+  "mode": "auto",
+  "id": "e65695-e7766a-f6ace7-f8a99414380a",
+  "identity": "https://github.com/supermarioyl/agentgate",
+  "primary": "#e65695",
+  "secondary": "#e7766a",
+  "highlight": "#f6ace7",
+  "dark": {
+    "bg": "#0a070f",
+    "panel": "#13101a",
+    "code": "#140d17",
+    "ink": "#fdeefa",
+    "muted": "#b29cb4",
+    "line": "#3a182c",
+    "primary": "#e65695",
+    "secondary": "#e7766a",
+    "highlight": "#f6ace7",
+    "accent": "#e65695",
+    "buttonStart": "#c54a80",
+    "buttonEnd": "#b55d53",
+    "buttonText": "#ffffff"
+  },
+  "light": {
+    "bg": "#fef9fb",
+    "panel": "#fef7fa",
+    "code": "#fdf3f8",
+    "ink": "#271624",
+    "muted": "#725e77",
+    "line": "#f7cbde",
+    "primary": "#bc467a",
+    "secondary": "#ad584f",
+    "highlight": "#8e6386",
+    "accent": "#bc467a",
+    "buttonStart": "#c54a80",
+    "buttonEnd": "#b55d53",
+    "buttonText": "#ffffff"
+  }
+}

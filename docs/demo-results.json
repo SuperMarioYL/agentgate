@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "source_revision": "d214177d22c334132e1dd46238d3040a3f36eb72",
+  "scope": "Offline policy resolution for four hypothetical actions; no command is executed and no destination is contacted.",
+  "steps": [
+    {
+      "label": "Recorded run",
+      "body": "Offline policy resolution for four hypothetical actions; no command is executed and no destination is contacted.",
+      "command": "python3 examples/presentation_demo.py",
+      "output": "action  : exec\ntarget  : curl http://evil.example\nintent  : agent wants to fetch a URL via curl: http://evil.example\ndecision: deny (matched a rule)\naction  : exec\ntarget  : npm install left-pad\nintent  : agent wants to install npm package: left-pad\ndecision: ask (matched a rule)\naction  : net_egress\ntarget  : registry.npmjs.org:443\nintent  : agent wants to reach registry.npmjs.org:443\ndecision: allow (matched a rule)\naction  : net_egress\ntarget  : registry.npmjs.org.evil.example:443\nintent  : agent wants to reach registry.npmjs.org.evil.example:443\ndecision: deny (matched a rule)"
+    }
+  ]
+}

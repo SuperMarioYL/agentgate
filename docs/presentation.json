@@ -1,0 +1,82 @@
+{
+  "name": "AgentGate",
+  "tagline": "Review an agent action before it runs.",
+  "architecture": {
+    "title": "Inside AgentGate",
+    "nodes": [
+      {
+        "title": "Command shims",
+        "detail": "internal/wrap/spawn.go"
+      },
+      {
+        "title": "Socket broker + proxy",
+        "detail": "internal/gate"
+      },
+      {
+        "title": "Ordered policy",
+        "detail": "internal/policy"
+      },
+      {
+        "title": "Prompt + audit",
+        "detail": "internal/prompt; internal/audit"
+      }
+    ],
+    "edges": [
+      [
+        0,
+        1
+      ],
+      [
+        1,
+        2
+      ],
+      [
+        2,
+        3
+      ]
+    ]
+  },
+  "process": {
+    "title": "From input to a useful result",
+    "steps": [
+      {
+        "title": "Load cookbook",
+        "detail": "Ordered YAML rules"
+      },
+      {
+        "title": "Resolve four actions",
+        "detail": "No execution or network"
+      },
+      {
+        "title": "Inspect verdicts",
+        "detail": "deny, ask, allow, deny"
+      }
+    ],
+    "result": "curl is denied; npm install asks; the registry is allowed; its look-alike hostname is denied."
+  },
+  "integrations": {
+    "title": "Supported input and output routes",
+    "items": [
+      {
+        "title": "YAML policy",
+        "detail": "First match wins; allow / deny / ask"
+      },
+      {
+        "title": "Configured executables",
+        "detail": "PATH shim interception"
+      },
+      {
+        "title": "HTTP(S) proxy",
+        "detail": "Host-based egress decisions"
+      },
+      {
+        "title": "JSONL",
+        "detail": "Runtime audit and filters"
+      },
+      {
+        "title": "check / policy",
+        "detail": "Dry-run explanation and rule management"
+      }
+    ]
+  }
+}

