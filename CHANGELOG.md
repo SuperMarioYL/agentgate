@@ -4,6 +4,42 @@ All notable changes to AgentGate are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.0] - 2026-09-17
+
+A fix train from the v0.13.0 source bug-hunt: four fixes, no new surface, no new
+deps. No live GitHub demand drove this (0 open issues); scope is anchored on
+reproduced defects, not invented demand.
+
+### Fixed
+
+- **The shebang interpreter hop no longer re-enters the shim PATH and re-prompts
+  the same allowed exec** (`fix-shebang-reentry-double-prompt`). npm/pip/gem are
+  universally `#!/usr/bin/env node|python3|ruby` wrapper scripts; the kernel's
+  binfmt handler re-execs them through `/usr/bin/env` USING the shimmed
+  environment, so `env` resolved the interpreter via the shim dir and the broker
+  prompted AGAIN for the very command the operator had just allowed. With a
+  single piped answer the same action was then denied at EOF and the approved
+  install never ran (also defeating `--always` persistence end-to-end). `execReal`
+  now resolves the `env <interp>` shebang itself and execs the REAL interpreter
+  directly (fail-soft for every other shebang form); the interpreter's own
+  children still inherit the shimmed PATH and stay gated.
+- **The demo workflow's gif commit survives a race with main**
+  (`fix-demo-workflow-tag-push-rejected`). The workflow pushed `HEAD:main` from a
+  detached tag HEAD; any commit landing on main during the multi-minute render
+  made the push a non-fast-forward rejection — this fired at the v0.12.0 tag
+  (gh run 33591370724) and the gif commit was lost. The step now fetches
+  origin/main and rebases the single gif commit before pushing (never force-push).
+- **Backfilled the missing CHANGELOG entries for shipped v0.9.0 and v0.10.0**
+  (`fix-changelog-missing-v0.9-v0.10`). Both versions shipped as GitHub releases
+  (2026-07-28 / 2026-08-21) but carried no `## [0.9.0]` / `## [0.10.0]` entries —
+  the header list jumped `[0.11.0]` -> `[0.8.0]`. A regression test now asserts
+  every shipped version has a CHANGELOG header.
+- **Stopped shipping windows binaries the runtime cannot support**
+  (`fix-windows-release-overclaim`). The release published windows zip archives
+  even though the README declares Linux | macOS only and the runtime is
+  POSIX-only (`#!/bin/sh` shims; `syscall.Exec` returns EWINDOWS unconditionally
+  on windows). `.goreleaser.yaml` now builds linux+darwin only.
+
 ## [0.12.0] - 2026-09-02
 
 A provenance-consistency release: one fix, no new surface, no new deps. The
@@ -51,6 +87,76 @@ environment pre-approves bypass hosts.
   dropped (and not re-added) so no host is exempted and every egress is mediated
   by the gate; the `--no-net` (gate off) path is unchanged and still preserves the
   operator's bypass list.
+
+## [0.10.0] - 2026-08-21
+
+A `--always`-integrity release: two fixes, no new surface, no new deps. Both
+defects lived on the path that turns an operator's `[A]lways` choice into a
+persisted rule.
+
+### Fixed
+
+- **A failed `--always` persist is no longer silently swallowed after the prompt
+  already said "remembered"** (`fix-always-persist-swallow-misleads-operator`).
+  `appendAlwaysRule` dropped the policy `Append` error (disk full, permission,
+  file corrupted between Load and write), so the operator was told
+  "allowed + remembered" while nothing was persisted — the next same-kind action
+  re-prompted and the audit row claimed Source="always" for a rule that never
+  landed. The persist error is now surfaced on stderr ("rule NOT remembered"),
+  the audit row is attributed to the operator's live choice, and the action
+  itself stays allowed.
+- **An `--always` allow rule no longer shadows explicit deny rules**
+  (`fix-always-rule-prepend-shadows-explicit-deny`). `policy.Append` prepended
+  the new allow at the FRONT of the rule list, so under first-match-wins it
+  overrode every preceding explicit deny on any custom policy that denied a
+  sub-pattern of an ask rule (allow `npm install <legit>` once → `deny exec *npm
+  install evil*` silently bypassed). The allow rule is now inserted immediately
+  BEFORE the matched ask rule: deny rules above keep precedence, the prompting
+  ask rule is shadowed so `--always` stops re-prompting, and the default remains
+  the last resort.
+
+## [0.9.0] - 2026-07-28
+
+A security-truth fix train: five fixes, no new surface, no new deps. Three are
+re-lands of v0.7.0 fixes whose file:line verification showed the pre-fix code
+still in the shipped binary; two are fresh from the source bug-hunt.
+
+### Fixed
+
+- **`agentgate audit` stays readable when one JSONL line is malformed or
+  truncated** (`fix-audit-read-malformed-line`). The reader decoded with
+  `json.NewDecoder` + `for dec.More()` and aborted on the FIRST bad line, so a
+  single torn trailing entry (the common SIGKILLed-agent case) made the whole
+  audit log unreadable. The read is now a per-line scanner that skips and
+  continues, returning the valid entries.
+- **`[A]lways` on a net_egress action persists the bare host, not the verbatim
+  `host:port`** (`fix-always-netegress-hostport-verbatim`). The runtime net
+  target is `host:port` (built by the redirect proxy), so `[A]lways` on
+  `registry.npmjs.org:443` only re-matched `:443` and `:80` re-prompted. The
+  persisted glob is now the bare host; `hostTokenMatch` covers any port and
+  still rejects suffix/prefix host attacks.
+- **`agentgate run --no-net` no longer strips the operator's HTTP(S)_PROXY**
+  (`fix-no-net-strips-operator-proxy`). The child env dropped all four proxy
+  vars unconditionally and only re-added the redirect proxy when the net gate
+  was on, so under `--no-net` an operator behind a corporate/forward proxy lost
+  upstream connectivity with no notice. The drop is now conditional on the net
+  gate being active.
+- **Piped/typed-ahead prompt answers are no longer silently denied**
+  (`fix-prompt-ask-per-call-bufio-reader-drops-answers`). Each `Ask` built a
+  fresh `bufio.Reader`, whose first fill can pull more than one line — the bytes
+  for the second answer sat in a discarded buffer and the next prompt saw EOF
+  ("no operator attached") and denied. One buffered reader is now reused across
+  prompts.
+- **The prompt no longer claims "remembered" for an `[A]lways` choice that was
+  never persisted** (`fix-always-without-policy-file-lies-remembered`). Without a
+  policy file (built-in default) persistence is disabled; the prompt now says
+  "allowed (not remembered — run `agentgate init`)" instead of a false
+  "allowed + remembered".
+
+### Notes
+
+- License prose reconciled with the shipped Apache-2.0 LICENSE (earlier docs
+  said MIT).
 
 ## [0.8.0] - 2026-07-25
 

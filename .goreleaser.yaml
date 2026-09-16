@@ -12,7 +12,11 @@ builds:
     binary: agentgate
     env:
       - CGO_ENABLED=0
-    goos: [linux, darwin, windows]
+    # Linux + macOS only — matches the README platform badge. Windows binaries
+    # used to ship here, but the runtime is POSIX-only (#!/bin/sh shim scripts;
+    # syscall.Exec returns EWINDOWS unconditionally on windows), so those
+    # artifacts installed but could never gate anything.
+    goos: [linux, darwin]
     goarch: [amd64, arm64]
     ldflags:
       - -s -w -X main.version={{.Version}}
@@ -20,9 +24,6 @@ builds:
 archives:
   - id: default
     formats: [tar.gz]
-    format_overrides:
-      - goos: windows
-        formats: [zip]
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
 
 checksum:

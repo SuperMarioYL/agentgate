@@ -289,13 +289,108 @@ func execReal(name string, args []string) int {
 		fmt.Fprintf(os.Stderr, "agentgate: %s not found on PATH: %v\n", name, err)
 		return 127
 	}
+	return execResolved(real, args)
+}
+
+// execResolved execs the resolved binary, replacing the current process.
+//
+// When the target is a shebang script of the universal package-manager shape
+// ("#!/usr/bin/env node|python3|ruby" — npm, pip, gem and friends are all such
+// wrappers), the kernel's binfmt handler re-execs "/usr/bin/env <interp>
+// <script> <args>" USING THE SHIMMED ENVIRONMENT: /usr/bin/env resolves <interp>
+// via PATH, finds the shim dir's wrapper first, and the interpreter shim asks the
+// broker AGAIN for the very command the operator just resolved — a second prompt
+// (or, with no operator input left, an EOF deny that blocks an action the
+// operator already allowed, defeating --always persistence). We therefore
+// resolve that interpreter hop OURSELVES via lookReal (which already skips the
+// shim dir) and exec the real interpreter directly. Only this one hop is
+// de-duplicated: every subsequent child the interpreter spawns still inherits
+// the shimmed PATH and stays gated. Any unrecognised shebang form falls back to
+// exec'ing the script as before (a direct absolute-path shebang bypasses PATH
+// and never re-enters the shim, so it needs no rewrite).
+func execResolved(real string, args []string) int {
+	if argv, ok := shebangExecArgv(real, args); ok {
+		if err := syscall.Exec(argv[0], argv, os.Environ()); err != nil {
+			// The direct interpreter exec failed (unexpected); fall back to
+			// exec'ing the script itself rather than failing the allowed action.
+			fmt.Fprintf(os.Stderr, "agentgate: exec interpreter %s: %v (falling back to direct exec)\n", argv[0], err)
+		} else {
+			return 0 // unreachable on success
+		}
+	}
 	full := append([]string{real}, args...)
-	err = syscall.Exec(real, full, os.Environ())
+	err := syscall.Exec(real, full, os.Environ())
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "agentgate: exec %s: %v\n", real, err)
 		return 1
 	}
 	return 0 // unreachable on success
+}
+
+// shebangExecArgv reports the argv needed to run real's shebang interpreter
+// directly, skipping the shim dir, when real is an `env <interp>` shebang script
+// whose interp is one of the intercepted commands. ok is false for every other
+// form, in which case the caller execs the script itself (today's behaviour).
+func shebangExecArgv(real string, args []string) ([]string, bool) {
+	interp, extra, ok := shebangEnvInterp(real)
+	if !ok || !isIntercepted(interp) {
+		return nil, false
+	}
+	realInterp, err := lookReal(interp)
+	if err != nil {
+		return nil, false
+	}
+	argv := make([]string, 0, 2+len(extra)+len(args))
+	argv = append(argv, realInterp)
+	argv = append(argv, extra...)
+	argv = append(argv, real)
+	argv = append(argv, args...)
+	return argv, true
+}
+
+// isIntercepted reports whether name is one of the commands we wrap shims for.
+func isIntercepted(name string) bool {
+	for _, c := range InterceptedCommands {
+		if c == name {
+			return true
+		}
+	}
+	return false
+}
+
+// shebangEnvInterp parses the shebang line of the file at path. It returns the
+// interpreter name and extra argv only for the `#!/usr/bin/env <interp>
+// [extra...]` form — the only form that resolves <interp> through PATH and can
+// therefore re-enter the shim dir. `env` flags (-S/-i/...), absolute or
+// relative interpreter paths, non-env shebangs, and non-scripts all return
+// ok=false (the caller falls back to exec'ing the file, which is correct for
+// those forms).
+func shebangEnvInterp(path string) (interp string, extra []string, ok bool) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", nil, false
+	}
+	defer f.Close()
+	buf := make([]byte, 256)
+	n, _ := f.Read(buf)
+	line := strings.SplitN(string(buf[:n]), "\n", 2)[0]
+	line = strings.TrimSuffix(line, "\r")
+	if !strings.HasPrefix(line, "#!") {
+		return "", nil, false
+	}
+	tokens := strings.Fields(strings.TrimPrefix(line, "#!"))
+	if len(tokens) < 2 || filepath.Base(tokens[0]) != "env" {
+		return "", nil, false
+	}
+	// tokens[1] must be a BARE interpreter name: an env flag (-S ...) or a path
+	// (which bypasses PATH lookup and cannot re-enter the shim) is left alone.
+	if strings.HasPrefix(tokens[1], "-") || strings.Contains(tokens[1], "/") {
+		return "", nil, false
+	}
+	if len(tokens) > 2 {
+		return tokens[1], tokens[2:], true
+	}
+	return tokens[1], nil, true
 }
 
 // lookReal resolves name on PATH, skipping any directory that contains our own
