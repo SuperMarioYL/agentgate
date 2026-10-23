@@ -104,7 +104,7 @@ go run ./cmd/agentgate audit --decision deny --json
 
 ## 配置
 
---policy 或 AGENTGATE_POLICY 指定策略，--audit 或 AGENTGATE_AUDIT 指定日志。--enforce 在无终端时把 ask 判为 deny；--no-net 关闭网络代理门控。规则使用 filepath 风格 glob，不是正则，也不支持 | 或运算。裸主机名按主机边界匹配；.github.com 表示子域，不含顶级域。用 policy rm 撤销已保存规则前应检查规则顺序。
+--policy 或 AGENTGATE_POLICY 指定策略，--audit 或 AGENTGATE_AUDIT 指定日志。--enforce 在无终端时把 ask 判为 deny；--no-net 关闭网络代理门控。规则使用 filepath 风格 glob，不是正则，也不支持 | 或运算。裸主机名按主机边界匹配；.github.com 表示子域，不含顶级域。用 policy rm 撤销已保存规则前应检查规则顺序：--policy 同时适用于 policy 及其 rm 子命令，可在列出的同一策略文件中撤销规则。action 不是 exec、fs_write、net_egress 的规则会在解析策略时被拒绝，拼错的规则不会静默失效。每条审计记录都会写明裁决来源：rule、default、operator、no-operator、always 或 enforce。
 
 ## 集成与职责分工
 

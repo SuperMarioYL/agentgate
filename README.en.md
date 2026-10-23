@@ -104,7 +104,7 @@ go run ./cmd/agentgate audit --decision deny --json
 
 ## Configuration
 
---policy or AGENTGATE_POLICY selects the policy; --audit or AGENTGATE_AUDIT selects the runtime log. --enforce makes ask resolve to deny without a TTY. --no-net disables the proxy gate. Rules use filepath-style globs, not regex or | alternation. Bare host tokens respect host boundaries; .github.com means its subdomains, excluding the apex. Review rule order before using policy rm to revoke a stored rule.
+--policy or AGENTGATE_POLICY selects the policy; --audit or AGENTGATE_AUDIT selects the runtime log. --enforce makes ask resolve to deny without a TTY. --no-net disables the proxy gate. Rules use filepath-style globs, not regex or | alternation. Bare host tokens respect host boundaries; .github.com means its subdomains, excluding the apex. Review rule order before using policy rm to revoke a stored rule: --policy works on policy and its rm subcommand alike, so a rule can be revoked from the same file it was listed from. A rule whose action is not exec, fs_write or net_egress is rejected when the policy is parsed, so a mistyped rule cannot silently never fire. Each audit row records how its decision was reached: rule, default, operator, no-operator, always or enforce.
 
 ## Integrations and responsibilities
 
