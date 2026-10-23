@@ -223,6 +223,63 @@ func TestInvalidDecisionRejected(t *testing.T) {
 	}
 }
 
+// v0.14.0 fix (fix-policy-action-kind-unvalidated): validate() checked only the
+// Decision, never Match.Action, so a mistyped action kind parsed clean and became
+// a rule that could never fire — Rule.matches compares Action for equality, so
+// `action: net_egres` never equals the net_egress ActionKind. The rule still
+// rendered in `agentgate policy` as an active row, so an operator believed the
+// surface was blocked while every request fell through to the default (a
+// fail-open deny rule on any policy whose default allows). RED before the fix:
+// Parse returned nil for each bad-action source below.
+func TestInvalidActionKindRejected(t *testing.T) {
+	for _, src := range []string{
+		"rules:\n  - match: {action: net_egres, target_glob: \"evil.example\"}\n    decision: deny\n",
+		"rules:\n  - match: {action: exex, target_glob: \"*\"}\n    decision: deny\n",
+		"rules:\n  - match: {action: net_egress}\n    decision: allow\n  - match: {action: Fs_Write}\n    decision: deny\n",
+	} {
+		if _, err := Parse([]byte(src)); err == nil {
+			t.Fatalf("an unknown action kind must be rejected at parse time (it can never fire):\n%s", src)
+		}
+	}
+
+	// The error names the rule's 1-based position (the number `agentgate policy`
+	// prints) and the offending value, so the operator can find the line.
+	_, err := Parse([]byte("default: deny\nrules:\n  - match: {action: exec}\n    decision: allow\n  - match: {action: net_egres}\n    decision: deny\n"))
+	if err == nil {
+		t.Fatal("expected the second rule's bad action to be rejected")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "rule 2") || !strings.Contains(msg, "net_egres") {
+		t.Fatalf("error should name rule 2 and the offending action, got: %v", err)
+	}
+
+	// A rule with NO action still parses: an empty Action matches every kind
+	// (the shipped default policy relies on this for its net_egress catch-all).
+	any, err := Parse([]byte("default: ask\nrules:\n  - match: {target_glob: \"*\"}\n    decision: deny\n"))
+	if err != nil {
+		t.Fatalf("a rule with an empty action (matches any kind) must still parse: %v", err)
+	}
+	if len(any.Rules) != 1 {
+		t.Fatalf("want 1 rule, got %d", len(any.Rules))
+	}
+}
+
+// The new action-kind validation must not reject any policy the repo actually
+// ships: the annotated example, the embedded default, and the supply-chain
+// cookbook use only exec / fs_write / net_egress (plus one action-less
+// net_egress catch-all in the default policy).
+func TestShippedPoliciesUseKnownActionKinds(t *testing.T) {
+	for _, path := range []string{
+		"policy.yaml.example",
+		filepath.Join("..", "..", "cmd", "agentgate", "policy.default.yaml"),
+		filepath.Join("..", "..", "examples", "policies", "supply-chain.yaml"),
+	} {
+		if _, err := Load(path); err != nil {
+			t.Fatalf("shipped policy %s must parse under the action-kind validation: %v", path, err)
+		}
+	}
+}
+
 func TestAppendPersistsRule(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "policy.yaml")

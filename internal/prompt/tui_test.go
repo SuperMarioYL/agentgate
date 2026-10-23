@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	agentctx "github.com/SuperMarioYL/agentgate/internal/context"
+	"github.com/SuperMarioYL/agentgate/internal/policy"
 )
 
 func ask(t *testing.T, input string) (Choice, string) {
@@ -47,9 +48,24 @@ func TestAskShowsIntent(t *testing.T) {
 	}
 }
 
+// v0.14.0 fix (fix-audit-denial-source-misattributed), prompt half: an EOF (no
+// operator attached) still FAILS CLOSED, but reports ChoiceNoOperator instead of
+// ChoiceDeny so the engine can record the truth in the audit trail — "nobody was
+// there" rather than "the operator denied this".
 func TestAskEOFFailsClosed(t *testing.T) {
-	if c, _ := ask(t, ""); c != ChoiceDeny {
-		t.Fatalf("EOF should fail closed to deny, got %v", c)
+	c, out := ask(t, "")
+	if c != ChoiceNoOperator {
+		t.Fatalf("EOF should report ChoiceNoOperator (no operator attached), got %v", c)
+	}
+	if !strings.Contains(out, "no operator attached") {
+		t.Fatalf("EOF prompt should say no operator was attached, got:\n%s", out)
+	}
+	// The fail-closed guarantee is unchanged: every non-allow choice denies.
+	if got := ChoiceToDecision(c); got != policy.Deny {
+		t.Fatalf("EOF must still resolve to deny, got %s", got)
+	}
+	if got := ChoiceToDecision(ChoiceDeny); got != policy.Deny {
+		t.Fatalf("an operator deny must resolve to deny, got %s", got)
 	}
 }
 

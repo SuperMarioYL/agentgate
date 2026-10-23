@@ -342,6 +342,66 @@ func captureStderr(t *testing.T, fn func()) string {
 	return <-done
 }
 
+// v0.14.0 fix (fix-audit-denial-source-misattributed), engine half: the audit
+// row's `source` must tell the truth about WHO denied an action.
+//
+// RED before the fix, both cases:
+//   - a nil prompter (what `agentgate run --enforce` builds) recorded
+//     source=default, even though the deny came from a matched `ask` rule and the
+//     policy default was never consulted;
+//   - an EOF/closed stdin recorded source=operator, crediting a human decision
+//     that never happened (the prompt itself printed "no operator attached").
+func TestAuditSourceTellsTheTruthAboutDenials(t *testing.T) {
+	// (a) Headless --enforce: the `ask` rule matched, the engine denies, and the
+	// row says "enforce" — not "default".
+	pol, err := policy.Parse([]byte("default: deny\nrules:\n  - match: {action: exec, target_glob: \"*install*\"}\n    decision: ask\n"))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	var headlessLog bytes.Buffer
+	headless := NewEngine(pol, nil, audit.NewWriter(&headlessLog))
+	if dec, _ := headless.Decide(agentctx.GateRequest{Action: agentctx.ActionExec, Target: "npm install left-pad"}); dec != policy.Deny {
+		t.Fatalf("headless enforce must deny an ask, got %s", dec)
+	}
+	got := headlessLog.String()
+	if !strings.Contains(got, `"source":"enforce"`) {
+		t.Fatalf("headless ask deny must record source=enforce, got:\n%s", got)
+	}
+	if strings.Contains(got, `"source":"default"`) {
+		t.Fatalf("headless ask deny must NOT claim the default rule decided, got:\n%s", got)
+	}
+
+	// (b) No operator attached: EOF denies, and the row says "no-operator" — not
+	// "operator".
+	var eofLog bytes.Buffer
+	pr := prompt.New(strings.NewReader(""), new(bytes.Buffer))
+	pr.NoColor = true
+	eof := NewEngine(pol, pr, audit.NewWriter(&eofLog))
+	if dec, _ := eof.Decide(agentctx.GateRequest{Action: agentctx.ActionExec, Target: "npm install left-pad"}); dec != policy.Deny {
+		t.Fatalf("no-operator EOF must fail closed to deny, got %s", dec)
+	}
+	got = eofLog.String()
+	if !strings.Contains(got, `"source":"no-operator"`) {
+		t.Fatalf("an EOF deny must record source=no-operator, got:\n%s", got)
+	}
+	if strings.Contains(got, `"source":"operator"`) {
+		t.Fatalf("an EOF deny must NOT credit an operator decision, got:\n%s", got)
+	}
+
+	// (c) An operator who really answers still records "operator" (regression
+	// guard: the truthful new sources must not swallow the human case).
+	var typedLog bytes.Buffer
+	typed := prompt.New(strings.NewReader("d\n"), new(bytes.Buffer))
+	typed.NoColor = true
+	eng := NewEngine(pol, typed, audit.NewWriter(&typedLog))
+	if dec, _ := eng.Decide(agentctx.GateRequest{Action: agentctx.ActionExec, Target: "npm install left-pad"}); dec != policy.Deny {
+		t.Fatalf("an operator 'd' must deny, got %s", dec)
+	}
+	if !strings.Contains(typedLog.String(), `"source":"operator"`) {
+		t.Fatalf("an operator-typed deny must still record source=operator, got:\n%s", typedLog.String())
+	}
+}
+
 // v0.10.0 regression (fix-always-persist-swallow-misleads-operator): when the
 // operator presses [A]lways but policy.Append fails (disk full, permission,
 // file deleted between Load and the atomic write), the gate must NOT silently

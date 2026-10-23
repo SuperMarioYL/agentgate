@@ -98,6 +98,18 @@ func Parse(data []byte) (*Policy, error) {
 
 func (p *Policy) validate() error {
 	for i, r := range p.Rules {
+		// An unknown action kind is a rule that can never fire: Rule.matches
+		// compares Action for equality against the request's ActionKind, so a
+		// typo like `net_egres` silently never matches while the rule still
+		// renders in `agentgate policy` as an active row. Reject it here so
+		// Parse/Load fail loudly instead of shipping a dead rule that an
+		// operator believes is enforcing.
+		switch r.Match.Action {
+		case "", agentctx.ActionExec, agentctx.ActionFSWrite, agentctx.ActionNetEgress:
+		default:
+			return fmt.Errorf("rule %d: invalid action %q (want exec|fs_write|net_egress, or empty to match any action)",
+				i+1, r.Match.Action)
+		}
 		switch r.Decision {
 		case Allow, Deny, Ask:
 		default:

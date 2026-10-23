@@ -26,8 +26,16 @@ type Entry struct {
 	Intent   string              `json:"intent"`
 	Agent    string              `json:"agent"`
 	Decision policy.Decision     `json:"decision"`
-	// Source records how the decision was reached: "rule", "default",
-	// "operator", or "always".
+	// Source records how the decision was reached, so the trail can distinguish a
+	// human choice from an automatic one:
+	//   rule        — a policy rule matched and decided (allow or deny)
+	//   default     — no rule matched, so the policy default decided
+	//   scope       — a matched fs_write allow rule's scope rejected the path
+	//   operator    — the operator answered the prompt (allow or deny)
+	//   no-operator — nobody was attached to answer (stdin EOF/closed), so the
+	//                 fail-closed default denied it
+	//   always      — the operator chose [A]lways and the allow rule was persisted
+	//   enforce     — headless `--enforce`: no prompt, an `ask` resolved to deny
 	Source string `json:"source"`
 }
 

@@ -4,6 +4,47 @@ All notable changes to AgentGate are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.14.0] - 2026-10-24
+
+A fix train from the v0.14.0 source bug-hunt: three fixes, no new surface, no new
+deps. No live GitHub demand drove this (0 open issues, 0 forks, stars unchanged
+since the v0.13.0 ship); scope is anchored on reproduced defects, not invented
+demand.
+
+### Fixed
+
+- **A policy rule with an unknown action kind is now rejected at parse time**
+  (`fix-policy-action-kind-unvalidated`). `validate()` checked only each rule's
+  `decision`, never `match.action`, so a typo like `action: net_egres` parsed
+  clean and became a rule that could never fire — `Rule.matches` compares the
+  action kind for equality, so the mistyped rule never matched any request while
+  `agentgate policy` still listed it as an active row. An operator's deny rule
+  silently protected nothing (a straight fail-open on any policy whose default is
+  `allow`). `Parse`/`Load` now reject an unknown action kind, naming the rule's
+  1-based position and the offending value; an empty `action` (matches any kind)
+  still parses, as the shipped default policy relies on.
+- **`agentgate policy rm` can now address a policy file**
+  (`fix-policy-rm-missing-policy-flag`). `--policy` was registered with
+  `cmd.Flags()` on the `policy` command, and cobra does not propagate
+  non-persistent flags to subcommands, so `rm` had no `--policy` at all: both
+  `agentgate policy --policy X rm 1` and `agentgate policy rm --policy X 1`
+  exited 1 with `unknown flag: --policy`. The revoke half of the feature was
+  unreachable for every policy that is not `./policy.yaml` or
+  `$AGENTGATE_POLICY`. `--policy` is now a persistent flag, so both forms work.
+  The same command's `--target` usage string no longer contains a backquoted
+  cross-reference: pflag treats the first backquoted substring as the flag's value
+  placeholder, so `policy rm --help` used to render `--target agentgate policy`.
+- **The audit trail no longer credits the operator with automatic denials**
+  (`fix-audit-denial-source-misattributed`). A headless `--enforce` denial of an
+  `ask` rule was recorded `source=default` even though the default decision was
+  never consulted, and a no-operator EOF denial (stdin closed, prompt printed
+  "deny (no operator attached)") was recorded `source=operator` although no
+  operator answered. `agentgate audit --json` is the machine-readable consent
+  record, so it now distinguishes `enforce` and `no-operator` from `operator`
+  (and documents the full vocabulary: `rule`, `default`, `scope`, `operator`,
+  `no-operator`, `always`, `enforce`). Every non-allow choice still resolves to
+  deny — the fail-closed posture is unchanged.
+
 ## [0.13.0] - 2026-09-17
 
 A fix train from the v0.13.0 source bug-hunt: four fixes, no new surface, no new

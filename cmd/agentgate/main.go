@@ -29,7 +29,7 @@ import (
 )
 
 // version is overridden at release time via -ldflags.
-var version = "0.13.0"
+var version = "0.14.0"
 
 //go:embed policy.default.yaml
 var defaultPolicy []byte
@@ -352,10 +352,14 @@ func policyCmd() *cobra.Command {
 			return pol.WriteTable(out)
 		},
 	}
-	cmd.Flags().StringVar(&policyPath, "policy", "", "policy file (default: ./policy.yaml or $AGENTGATE_POLICY)")
+	// --policy is PERSISTENT so the rm subcommand inherits it: a non-persistent
+	// cmd.Flags() registration is not propagated to subcommands by cobra, which
+	// left `agentgate policy rm` unable to address anything but ./policy.yaml
+	// (`agentgate policy --policy X rm 1` and `agentgate policy rm --policy X 1`
+	// both failed with "unknown flag: --policy").
+	cmd.PersistentFlags().StringVar(&policyPath, "policy", "", "policy file (default: ./policy.yaml or $AGENTGATE_POLICY)")
 	cmd.Flags().BoolVar(&explain, "explain", false, "resolve one hypothetical action and show which rule it hits")
 	cmd.Flags().StringVar(&action, "action", "exec", "with --explain: action kind: exec | fs_write | net_egress")
-	// share --policy with the rm subcommand so `agentgate policy rm --policy X` works.
 	cmd.AddCommand(policyRmCmd(&policyPath))
 	return cmd
 }
@@ -436,7 +440,11 @@ func policyRmCmd(sharedPolicyPath *string) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&rmAction, "action", "", "match a rule by action: exec | fs_write | net_egress")
-	cmd.Flags().StringVar(&rmTarget, "target", "", "match a rule by its exact target glob (as shown in `agentgate policy`)")
+	// No backquotes in the usage: pflag's UnquoteUsage treats the FIRST
+	// backquoted substring as the flag's value placeholder and strips it, so a
+	// cross-reference like "...as shown in `agentgate policy`" rendered the flag
+	// as `--target agentgate policy` and deleted the sentence.
+	cmd.Flags().StringVar(&rmTarget, "target", "", "match a rule by its exact target glob (as shown by agentgate policy)")
 	return cmd
 }
 

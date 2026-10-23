@@ -34,6 +34,12 @@ const (
 	ChoiceAllow
 	// ChoiceAlways permits and persists an allow rule for matching actions.
 	ChoiceAlways
+	// ChoiceNoOperator means nobody was attached to answer (stdin was at EOF or
+	// closed), so the action was refused by the fail-closed default rather than by
+	// a human decision. It resolves to deny exactly like ChoiceDeny, but the two
+	// stay distinct so the audit trail does not credit the operator with an
+	// automatic denial.
+	ChoiceNoOperator
 )
 
 // Prompter asks the operator to resolve an "ask" decision.
@@ -97,7 +103,9 @@ func (p *Prompter) Ask(req agentctx.GateRequest) (Choice, error) {
 	line, err := r.ReadString('\n')
 	if err == io.EOF && line == "" {
 		fmt.Fprintln(w, p.c(red, "deny (no operator attached)"))
-		return ChoiceDeny, nil
+		// ChoiceNoOperator, not ChoiceDeny: the action IS denied (fail closed),
+		// but no operator decided it, and the audit row must not claim one did.
+		return ChoiceNoOperator, nil
 	}
 	if err != nil && err != io.EOF {
 		return ChoiceDeny, err
@@ -132,7 +140,9 @@ func (p *Prompter) DenialNotice(req agentctx.GateRequest) {
 		p.c(red, req.Target))
 }
 
-// ChoiceToDecision maps an operator Choice to a policy Decision.
+// ChoiceToDecision maps an operator Choice to a policy Decision. Every choice
+// other than allow/always resolves to deny — ChoiceNoOperator (nobody attached)
+// included, so the fail-closed posture is unchanged.
 func ChoiceToDecision(c Choice) policy.Decision {
 	switch c {
 	case ChoiceAllow, ChoiceAlways:

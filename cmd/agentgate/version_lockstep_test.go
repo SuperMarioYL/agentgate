@@ -52,6 +52,28 @@ func TestVersionProvenanceLockstep(t *testing.T) {
 	}
 }
 
+// v0.14.0: lock the two provenance surfaces the v0.12.0 lockstep test left
+// unlocked — the repo-root VERSION file and the cobra Version field that backs
+// `agentgate --version`. TestVersionProvenanceLockstep pins web/site.json against
+// main.version only, so VERSION or the CLI surface could drift behind the binary
+// unnoticed.
+func TestVersionLockstepCoversVersionFileAndCLI(t *testing.T) {
+	path := findRepoFile(t, "VERSION")
+	if path == "" {
+		t.Skipf("VERSION not found by walking up from %q (run via `go test ./...` from the repo root)", mustCwd(t))
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	if got := strings.TrimSpace(string(data)); got != version {
+		t.Fatalf("version drift: VERSION file says %q but main.version is %q — bump every provenance surface together", got, version)
+	}
+	if got := rootCmd().Version; got != version {
+		t.Fatalf("version drift: the CLI --version surface reports %q but main.version is %q", got, version)
+	}
+}
+
 // findRepoSiteJSON walks up from the test working directory until it finds
 // web/site.json, returning the first match. go test sets the working directory
 // to the package source dir (cmd/agentgate), so the walk climbs cmd/agentgate

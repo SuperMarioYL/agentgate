@@ -93,11 +93,24 @@ func (e *Engine) Decide(req agentctx.GateRequest) (policy.Decision, error) {
 
 func (e *Engine) resolveAsk(req agentctx.GateRequest, askRuleIdx int) (policy.Decision, string) {
 	if e.prompter == nil {
-		return policy.Deny, "default" // headless: fail closed
+		// Headless (`agentgate run --enforce`): there is no operator to ask, so
+		// every `ask` resolves to deny. The audit source is "enforce" rather than
+		// "default" — the deny came from the matched ask rule under the headless
+		// posture, not from the policy's default decision.
+		return policy.Deny, "enforce"
 	}
 	choice, err := e.prompter.Ask(req)
 	if err != nil {
-		return policy.Deny, "operator"
+		// The prompt could not be answered (read error): fail closed and do not
+		// attribute the denial to an operator who never answered.
+		return policy.Deny, "no-operator"
+	}
+	if choice == prompt.ChoiceNoOperator {
+		// Nobody was attached (stdin at EOF/closed). The action is denied by the
+		// fail-closed default, so the audit row must not claim the operator
+		// decided it — that is the difference between "I denied this" and "nobody
+		// was there".
+		return policy.Deny, "no-operator"
 	}
 	if choice == prompt.ChoiceAlways && e.persist != "" {
 		if persistErr := e.appendAlwaysRule(req, askRuleIdx); persistErr != nil {

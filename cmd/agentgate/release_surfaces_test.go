@@ -38,7 +38,7 @@ func findRepoFile(t *testing.T, rel string) string {
 // versions with no changelog record. Extend this list when a new version ships.
 var shippedVersions = []string{
 	"0.1.0", "0.2.0", "0.3.0", "0.4.0", "0.5.0", "0.6.0",
-	"0.7.0", "0.8.0", "0.9.0", "0.10.0", "0.11.0", "0.12.0", "0.13.0",
+	"0.7.0", "0.8.0", "0.9.0", "0.10.0", "0.11.0", "0.12.0", "0.13.0", "0.14.0",
 }
 
 // TestChangelogCoversShippedVersions asserts every shipped version has a
